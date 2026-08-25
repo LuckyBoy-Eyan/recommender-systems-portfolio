@@ -1,0 +1,100 @@
+{
+  "status": "completed",
+  "config_path": "configs/retailrocket_top100_per_source.json",
+  "config": {
+    "seed": 2026,
+    "data_path": "data/retailrocket/events.csv",
+    "max_sessions": null,
+    "expected_data_profile": {
+      "sessions": 20000,
+      "catalog_size_limit": 3000,
+      "max_sessions": 20000,
+      "min_session_length": 3
+    },
+    "train_ratio": 0.7,
+    "valid_ratio": 0.15,
+    "snapshot_interval": 86400000,
+    "candidates_per_source": 100,
+    "embedding": {
+      "method": "item2vec",
+      "max_neighbors": 100,
+      "dimensions": 32,
+      "window": 2,
+      "negative_samples": 5,
+      "epochs": 8,
+      "batch_size": 1024,
+      "learning_rate": 0.01,
+      "min_count": 1,
+      "action_weights": {
+        "clicks": 1.0,
+        "carts": 3.0,
+        "orders": 6.0
+      },
+      "exclude_positive_contexts": false
+    },
+    "primary_ranker": "shared_bottom",
+    "rankers": {
+      "tree": {
+        "method": "tree"
+      },
+      "shared_bottom": {
+        "method": "shared_bottom",
+        "hidden_dims": [
+          64,
+          32
+        ],
+        "epochs": 10,
+        "batch_size": 1024,
+        "learning_rate": 0.001,
+        "weight_decay": 0.0001
+      }
+    },
+    "topk": 20,
+    "max_negative_per_session": 60
+  },
+  "data_path": "data/retailrocket/events.csv",
+  "data_sha256": "7da24632244ac5284d242857a9df85b1f69af48021b4b5e0a9caf6dc4db27462",
+  "data_metadata": {
+    "sessions": 20000,
+    "items": 2802,
+    "events": 96516,
+    "types": {
+      "clicks": 87293,
+      "carts": 6547,
+      "orders": 2676
+    },
+    "dropped_ambiguous_target_sessions": 139,
+    "catalog_size_limit": 3000,
+    "max_sessions": 20000,
+    "min_session_length": 3,
+    "sessionization_before_catalog_filter": true
+  },
+  "evaluate_test": false,
+  "environment": {
+    "python": "3.13.9",
+    "numpy": "2.3.5",
+    "pandas": "2.3.3",
+    "scikit_learn": "1.7.2",
+    "torch": "2.12.0",
+    "platform": "macOS-26.0-arm64-arm-64bit-Mach-O"
+  },
+  "warmup": {
+    "enabled": false,
+    "label_start_ts": null,
+    "warmup_days": 0,
+    "warmup_start_ts": null,
+    "warmup_sessions": 0,
+    "warmup_events": 0
+  },
+  "metrics_path": "metrics.json",
+  "model_path": "ranker_systems.joblib",
+  "runtime_seconds": {
+    "train_candidate_and_features": 128.97331791601027,
+    "rankers": {
+      "tree": 6.93746541699511,
+      "shared_bottom": 8.485436000017216
+    },
+    "validation": 62.3533509580011,
+    "total": 215.96927195900935
+  }
+}

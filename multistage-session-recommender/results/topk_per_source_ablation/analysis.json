@@ -1,0 +1,183 @@
+{
+  "label_counts": {
+    "clicks": 2623,
+    "orders": 214,
+    "carts": 163
+  },
+  "top50_file_rows": 424531,
+  "top100_file_rows": 797725,
+  "sources": {
+    "recent": {
+      "20": {
+        "overall": 0.6663333333333333,
+        "hits": 1999,
+        "clicks": 0.6221883339687381,
+        "carts": 0.9447852760736196,
+        "orders": 0.9953271028037384
+      },
+      "50": {
+        "overall": 0.6663333333333333,
+        "hits": 1999,
+        "clicks": 0.6221883339687381,
+        "carts": 0.9447852760736196,
+        "orders": 0.9953271028037384
+      },
+      "100": {
+        "overall": 0.6663333333333333,
+        "hits": 1999,
+        "clicks": 0.6221883339687381,
+        "carts": 0.9447852760736196,
+        "orders": 0.9953271028037384
+      },
+      "candidate_count": {
+        "mean": 2.324333333333333,
+        "p50": 2.0,
+        "p95": 5.0,
+        "max": 29
+      }
+    },
+    "popular": {
+      "20": {
+        "overall": 0.034333333333333334,
+        "hits": 103,
+        "clicks": 0.03316812809759817,
+        "carts": 0.06134969325153374,
+        "orders": 0.028037383177570093
+      },
+      "50": {
+        "overall": 0.06866666666666667,
+        "hits": 206,
+        "clicks": 0.06671749904689286,
+        "carts": 0.07975460122699386,
+        "orders": 0.08411214953271028
+      },
+      "100": {
+        "overall": 0.12233333333333334,
+        "hits": 367,
+        "clicks": 0.12199771254288982,
+        "carts": 0.1165644171779141,
+        "orders": 0.1308411214953271
+      },
+      "candidate_count": {
+        "mean": 100.0,
+        "p50": 100.0,
+        "p95": 100.0,
+        "max": 100
+      }
+    },
+    "itemcf": {
+      "20": {
+        "overall": 0.42,
+        "hits": 1260,
+        "clicks": 0.4544414792222646,
+        "carts": 0.2331288343558282,
+        "orders": 0.14018691588785046
+      },
+      "50": {
+        "overall": 0.49133333333333334,
+        "hits": 1474,
+        "clicks": 0.5284025924513915,
+        "carts": 0.31901840490797545,
+        "orders": 0.16822429906542055
+      },
+      "100": {
+        "overall": 0.5176666666666667,
+        "hits": 1553,
+        "clicks": 0.5550895920701486,
+        "carts": 0.37423312883435583,
+        "orders": 0.16822429906542055
+      },
+      "candidate_count": {
+        "mean": 64.684,
+        "p50": 74.0,
+        "p95": 100.0,
+        "max": 100
+      }
+    },
+    "item2vec": {
+      "20": {
+        "overall": 0.21133333333333335,
+        "hits": 634,
+        "clicks": 0.24018299656881434,
+        "carts": 0.006134969325153374,
+        "orders": 0.014018691588785047
+      },
+      "50": {
+        "overall": 0.35733333333333334,
+        "hits": 1072,
+        "clicks": 0.4010674799847503,
+        "carts": 0.06748466257668712,
+        "orders": 0.04205607476635514
+      },
+      "100": {
+        "overall": 0.45,
+        "hits": 1350,
+        "clicks": 0.49980937857415175,
+        "carts": 0.13496932515337423,
+        "orders": 0.0794392523364486
+      },
+      "candidate_count": {
+        "mean": 98.9,
+        "p50": 100.0,
+        "p95": 100.0,
+        "max": 100
+      }
+    }
+  },
+  "union": {
+    "20": {
+      "recall": 0.8833333333333333,
+      "hits": 2650,
+      "mean_unique_candidates": 50.082,
+      "p50_unique_candidates": 51.0,
+      "p95_unique_candidates": 58.0,
+      "max_unique_candidates": 75,
+      "by_action": {
+        "clicks": 0.8696149447197865,
+        "carts": 0.950920245398773,
+        "orders": 1.0
+      }
+    },
+    "50": {
+      "recall": 0.9213333333333333,
+      "hits": 2764,
+      "mean_unique_candidates": 119.02666666666667,
+      "p50_unique_candidates": 121.0,
+      "p95_unique_candidates": 139.0,
+      "max_unique_candidates": 158,
+      "by_action": {
+        "clicks": 0.9126953869614944,
+        "carts": 0.9570552147239264,
+        "orders": 1.0
+      }
+    },
+    "100": {
+      "recall": 0.936,
+      "hits": 2808,
+      "mean_unique_candidates": 227.947,
+      "p50_unique_candidates": 226.0,
+      "p95_unique_candidates": 271.0,
+      "max_unique_candidates": 298,
+      "by_action": {
+        "clicks": 0.9290888295844453,
+        "carts": 0.9631901840490797,
+        "orders": 1.0
+      }
+    }
+  },
+  "top50_prefix_identical": true,
+  "union_increment": {
+    "new_hits": 44,
+    "lost_hits": 0,
+    "new_hit_types": {
+      "clicks": 43,
+      "carts": 1
+    }
+  },
+  "new_hits_attributed_to_tail_source_nonexclusive": {
+    "recent": 0,
+    "popular": 6,
+    "itemcf": 18,
+    "item2vec": 24
+  }
+}

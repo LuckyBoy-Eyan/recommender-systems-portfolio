@@ -1,0 +1,133 @@
+{
+  "experiment": "shared_bottom_feature_group_masking",
+  "split": "validation",
+  "method": "replace each raw feature with the value mapping to zero after the fitted training preprocessor",
+  "model_path": "outputs/retailrocket_top3000_session20000_final/ranker_systems.joblib",
+  "sessions": 3000,
+  "feature_rows": 357080,
+  "snapshots": 9,
+  "baseline": {
+    "recall_clicks@20": 0.844834159359512,
+    "recall_carts@20": 0.950920245398773,
+    "recall_orders@20": 1.0,
+    "weighted_recall@20": 0.969759489555583
+  },
+  "groups": {
+    "recall_confidence": {
+      "columns": [
+        "source_rank_recent",
+        "source_score_recent",
+        "source_rank_popular",
+        "source_score_popular",
+        "source_rank_itemcf",
+        "source_score_itemcf",
+        "source_rank_item2vec",
+        "source_score_item2vec",
+        "source_count",
+        "best_source_rank",
+        "rrf_score"
+      ],
+      "metrics": {
+        "recall_clicks@20": 0.7220739611132291,
+        "recall_carts@20": 0.9447852760736196,
+        "recall_orders@20": 0.9906542056074766,
+        "weighted_recall@20": 0.9500355022978948
+      },
+      "absolute_drop": {
+        "recall_clicks@20": 0.12276019824628293,
+        "recall_carts@20": 0.006134969325153339,
+        "recall_orders@20": 0.009345794392523366,
+        "weighted_recall@20": 0.019723987257688202
+      },
+      "weighted_relative_drop": 0.02033905052759754,
+      "runtime_seconds": 0.7642649170011282
+    },
+    "item_popularity": {
+      "columns": [
+        "item_events",
+        "item_sessions",
+        "item_last_ts"
+      ],
+      "metrics": {
+        "recall_clicks@20": 0.8440716736561189,
+        "recall_carts@20": 0.950920245398773,
+        "recall_orders@20": 1.0,
+        "weighted_recall@20": 0.9696832409852437
+      },
+      "absolute_drop": {
+        "recall_clicks@20": 0.000762485703393101,
+        "recall_carts@20": 0.0,
+        "recall_orders@20": 0.0,
+        "weighted_recall@20": 7.624857033927679e-05
+      },
+      "weighted_relative_drop": 7.862626884344245e-05,
+      "runtime_seconds": 0.7731333329866175
+    },
+    "item_action": {
+      "columns": [
+        "item_clicks",
+        "item_carts",
+        "item_orders",
+        "cart_rate",
+        "order_rate"
+      ],
+      "metrics": {
+        "recall_clicks@20": 0.8440716736561189,
+        "recall_carts@20": 0.950920245398773,
+        "recall_orders@20": 1.0,
+        "weighted_recall@20": 0.9696832409852437
+      },
+      "absolute_drop": {
+        "recall_clicks@20": 0.000762485703393101,
+        "recall_carts@20": 0.0,
+        "recall_orders@20": 0.0,
+        "weighted_recall@20": 7.624857033927679e-05
+      },
+      "weighted_relative_drop": 7.862626884344245e-05,
+      "runtime_seconds": 0.7622009580081794
+    },
+    "session_context": {
+      "columns": [
+        "session_length",
+        "session_unique_items",
+        "session_last_ts"
+      ],
+      "metrics": {
+        "recall_clicks@20": 0.844834159359512,
+        "recall_carts@20": 0.950920245398773,
+        "recall_orders@20": 1.0,
+        "weighted_recall@20": 0.969759489555583
+      },
+      "absolute_drop": {
+        "recall_clicks@20": 0.0,
+        "recall_carts@20": 0.0,
+        "recall_orders@20": 0.0,
+        "weighted_recall@20": 0.0
+      },
+      "weighted_relative_drop": 0.0,
+      "runtime_seconds": 0.7549634999886621
+    },
+    "session_item_cross": {
+      "columns": [
+        "in_session_count",
+        "pair_last_ts",
+        "seconds_since_seen"
+      ],
+      "metrics": {
+        "recall_clicks@20": 0.8227220739611132,
+        "recall_carts@20": 0.950920245398773,
+        "recall_orders@20": 0.9953271028037384,
+        "weighted_recall@20": 0.9647445426979863
+      },
+      "absolute_drop": {
+        "recall_clicks@20": 0.022112085398398817,
+        "recall_carts@20": 0.0,
+        "recall_orders@20": 0.004672897196261627,
+        "weighted_recall@20": 0.005014946857596736
+      },
+      "weighted_relative_drop": 0.0051713305325787155,
+      "runtime_seconds": 0.7773737919924315
+    }
+  },
+  "runtime_seconds": 64.34353949999786
+}

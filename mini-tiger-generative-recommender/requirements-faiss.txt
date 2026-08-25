@@ -1,0 +1,3 @@
+# Optional production backend. Install this in an environment for which Faiss
+# publishes a wheel; the base project automatically falls back to sklearn.
+faiss-cpu>=1.8

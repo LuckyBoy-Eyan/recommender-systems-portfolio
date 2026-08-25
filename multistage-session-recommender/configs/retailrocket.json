@@ -1,0 +1,48 @@
+{
+  "seed": 2026,
+  "data_path": "data/retailrocket/events.csv",
+  "max_sessions": null,
+  "expected_data_profile": {
+    "sessions": 20000,
+    "catalog_size_limit": 3000,
+    "max_sessions": 20000,
+    "min_session_length": 3
+  },
+  "train_ratio": 0.7,
+  "valid_ratio": 0.15,
+  "snapshot_interval": 86400000,
+  "candidates_per_source": 50,
+  "embedding": {
+    "method": "item2vec",
+    "max_neighbors": 100,
+    "dimensions": 32,
+    "window": 2,
+    "negative_samples": 5,
+    "epochs": 8,
+    "batch_size": 1024,
+    "learning_rate": 0.01,
+    "min_count": 1,
+    "action_weights": {
+      "clicks": 1.0,
+      "carts": 3.0,
+      "orders": 6.0
+    },
+    "exclude_positive_contexts": false
+  },
+  "primary_ranker": "shared_bottom",
+  "rankers": {
+    "shared_bottom": {
+      "method": "shared_bottom",
+      "hidden_dims": [
+        64,
+        32
+      ],
+      "epochs": 10,
+      "batch_size": 1024,
+      "learning_rate": 0.001,
+      "weight_decay": 0.0001
+    }
+  },
+  "topk": 20,
+  "max_negative_per_session": 60
+}

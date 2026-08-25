@@ -1,0 +1,16 @@
+{
+  "seed": 2026,
+  "interactions_path": "data/movielens/interactions.csv",
+  "item_features_path": "data/movielens/item_features.npy",
+  "eval_last_only": true,
+  "codebook_sizes": [16, 16],
+  "semantic_id_method": "residual",
+  "max_history": 20,
+  "hidden_dim": 64,
+  "num_layers": 2,
+  "num_heads": 4,
+  "batch_size": 64,
+  "epochs": 5,
+  "learning_rate": 0.001,
+  "topk": [5, 10, 20]
+}

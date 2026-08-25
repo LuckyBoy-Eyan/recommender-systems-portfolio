@@ -1,0 +1,132 @@
+{
+  "data": {
+    "events": 97384,
+    "input_events": 145097,
+    "dropped_ambiguous_target_sessions": 0,
+    "formal_sessions": 20000,
+    "warmup_sessions": 4743,
+    "warmup_events": 22437,
+    "train_sessions": 14000,
+    "valid_sessions": 3000,
+    "test_sessions": 3000
+  },
+  "validation": {
+    "candidate_recall": 0.9286666666666666,
+    "candidate_recall_by_action": {
+      "candidate_recall_clicks": 0.9205273069679849,
+      "candidate_recall_carts": 0.9849624060150376,
+      "candidate_recall_orders": 0.9952830188679245,
+      "weighted_candidate_recall": 0.9847112638220644
+    },
+    "baseline": {
+      "recall_clicks@20": 0.7408662900188324,
+      "recall_carts@20": 0.7443609022556391,
+      "recall_orders@20": 0.8066037735849056,
+      "weighted_recall@20": 0.7813571638295184
+    },
+    "primary_ranker": "shared_bottom",
+    "ranker": {
+      "recall_clicks@20": 0.8489642184557439,
+      "recall_carts@20": 0.9774436090225563,
+      "recall_orders@20": 0.9905660377358491,
+      "weighted_recall@20": 0.9724691271938507
+    },
+    "rankers": {
+      "tree": {
+        "recall_clicks@20": 0.8403013182674199,
+        "recall_carts@20": 0.9699248120300752,
+        "recall_orders@20": 0.9905660377358491,
+        "weighted_recall@20": 0.969347198077274
+      },
+      "shared_bottom": {
+        "recall_clicks@20": 0.8489642184557439,
+        "recall_carts@20": 0.9774436090225563,
+        "recall_orders@20": 0.9905660377358491,
+        "weighted_recall@20": 0.9724691271938507
+      }
+    },
+    "sources": {
+      "item2vec_recall@20": 0.20733333333333334,
+      "itemcf_recall@20": 0.43766666666666665,
+      "popular_recall@20": 0.03766666666666667,
+      "recent_recall@20": 0.6686666666666666
+    },
+    "point_in_time_audit": {
+      "snapshots": 9,
+      "all_snapshots_causal": true
+    }
+  },
+  "point_in_time": {
+    "snapshot_interval": 86400000,
+    "embedding": {
+      "method": "item2vec",
+      "max_neighbors": 100,
+      "dimensions": 32,
+      "window": 2,
+      "negative_samples": 5,
+      "epochs": 8,
+      "batch_size": 1024,
+      "learning_rate": 0.01,
+      "min_count": 1,
+      "action_weights": {
+        "clicks": 1.0,
+        "carts": 3.0,
+        "orders": 6.0
+      },
+      "exclude_positive_contexts": false
+    },
+    "train_snapshots": 38,
+    "validation_snapshots": 9
+  },
+  "primary_ranker": "shared_bottom",
+  "rankers": {
+    "tree": {
+      "method": "tree"
+    },
+    "shared_bottom": {
+      "method": "shared_bottom",
+      "hidden_dims": [
+        64,
+        32
+      ],
+      "epochs": 10,
+      "batch_size": 1024,
+      "learning_rate": 0.001,
+      "weight_decay": 0.0001
+    }
+  },
+  "ranker_training_audit": {
+    "tree": {
+      "method": "tree",
+      "models": 3
+    },
+    "shared_bottom": {
+      "method": "shared_bottom",
+      "trainable_parameters": 3843,
+      "observed_rows": {
+        "clicks": 746816,
+        "carts": 46336,
+        "orders": 57189
+      },
+      "positive_weights": {
+        "clicks": 66.29890961521131,
+        "carts": 62.12806539509537,
+        "orders": 59.96908315565032
+      },
+      "positive_rows": {
+        "clicks": 11097,
+        "carts": 734,
+        "orders": 938
+      }
+    }
+  },
+  "runtime_seconds": {
+    "train_candidate_and_features": 207.5760531660053,
+    "rankers": {
+      "tree": 9.206794249999803,
+      "shared_bottom": 9.819019249989651
+    },
+    "validation": 81.21819833299378,
+    "total": 316.68058195800404
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "seed": 2026,
+  "interactions_path": null,
+  "item_features_path": null,
+  "num_users": 180,
+  "num_items": 120,
+  "num_topics": 8,
+  "feature_dim": 16,
+  "min_seq_len": 8,
+  "max_seq_len": 16,
+  "codebook_sizes": [8, 8],
+  "semantic_id_method": "residual",
+  "max_history": 10,
+  "hidden_dim": 64,
+  "num_layers": 2,
+  "num_heads": 4,
+  "batch_size": 32,
+  "epochs": 3,
+  "learning_rate": 0.001,
+  "topk": [5, 10]
+}
