@@ -77,4 +77,5 @@ python scripts/run_demo.py \
 
 当前测试覆盖确定性、token 范围、残差误差、容量上限、碰撞消解以及发布产物。
 旧树式 KMeans 实现仍保留在 `src/indexing/semantic_ids.py`，但失败的旧实验配置和
-临时输出已从简历版目录移除。
+临时输出已从正式目录移除。
+
