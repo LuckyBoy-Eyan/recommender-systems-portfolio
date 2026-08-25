@@ -49,7 +49,7 @@ event_ts < snapshot_ts <= target_ts
 
 这些数字说明 Item2Vec 提供了一路可用候选，但不能单独证明它对合并候选或最终排序的
 增量贡献。当前数据口径尚未完成 Item2Vec、SVD 与关闭向量召回的多随机种子公平消融，
-因此简历和面试中不应声称 Item2Vec 稳定优于其他向量召回方案。
+因此当前项目不声称 Item2Vec 稳定优于其他向量召回方案。
 
 若继续研究，应只在新的验证方案上比较：
 
@@ -58,3 +58,4 @@ event_ts < snapshot_ts <= target_ts
 - 最终 Weighted Recall@20；
 - 多随机种子的均值和方差；
 - 快照训练时间、索引时间与内存开销。
+
