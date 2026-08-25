@@ -7,5 +7,5 @@
 3. [代码导读](code-walkthrough.md)：主要模块和端到端调用链；
 4. [KuaiRec 实验](kuairec-experiment.md)：数据协议与防泄漏设计；
 5. [RQ-KMeans 设计](rq-kmeans.md)：Semantic ID 索引实现；
-6. [面试指南](interview-guide.md)：简历描述、项目讲法和常见追问；
-7. [CUDA 运行指南](windows-cuda.md)：Windows NVIDIA 环境复现步骤。
+6. [CUDA 运行指南](windows-cuda.md)：Windows NVIDIA 环境复现步骤。
+
