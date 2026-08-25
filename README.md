@@ -34,12 +34,6 @@
 源码与配置负责复现，测试负责正确性，Markdown 报告和轻量 JSON 负责展示实验
 结论。原始数据、模型权重、候选明细及环境缓存不属于仓库内容。
 
-## 推荐面试讲解顺序
-
-首先讲解多阶段会话推荐项目，展示推荐系统全链路、数据泄漏意识、召回诊断、
-特征工程与多目标排序能力。随后讲解 MiniTIGER，展示生成式推荐、Semantic ID、
-自回归建模以及约束解码等前沿方向。
-
 ## 验证项目
 
 ```bash
@@ -56,3 +50,4 @@ python -m pytest -q
 - [多阶段会话推荐演进记录](multistage-session-recommender/docs/project-evolution.md)
 - [MiniTIGER README](mini-tiger-generative-recommender/README.md)
 - [MiniTIGER 演进记录](mini-tiger-generative-recommender/docs/project-evolution.md)
+
