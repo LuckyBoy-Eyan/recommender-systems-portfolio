@@ -119,7 +119,7 @@ python scripts/run_pipeline.py --config configs/retailrocket.json \
 - `src/evaluation/metrics.py`：Candidate Recall、分召回源诊断及 Weighted Recall；
 - `scripts/run_pipeline.py`：真实数据端到端训练与评估入口。
 
-## 面试讲解重点
+## 设计与评估要点
 
 排序模型只能对已经被召回的候选进行优化，因此 Candidate Recall 决定了最终推荐
 效果的上限。本项目会在训练排序模型前独立分析每一路召回，并使用真实召回候选中
@@ -158,5 +158,5 @@ Shared-Bottom使用共享底层和点击、加购、购买三个任务塔，并�
 - [候选深度消融](docs/experiments/candidate-depth.md)
 - [预热窗口消融](docs/experiments/warmup.md)
 - [实验结果摘要](docs/results.md)
-- [面试指南](docs/interview-guide.md)
 - [后续完善方向](docs/roadmap.md)
+
