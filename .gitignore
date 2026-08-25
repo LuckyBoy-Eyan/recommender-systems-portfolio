@@ -1,0 +1,27 @@
+# Python caches and local environments
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Local data and generated artifacts
+data/
+output/
+outputs/
+tmp/
+*.parquet
+*.joblib
+*.pt
+*.zip
+
+# IDE and operating-system metadata
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local secrets
+.env
+.env.*
+!.env.example
