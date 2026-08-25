@@ -76,8 +76,8 @@ P(item | history)
 ```text
 configs/        可复现实验配置
 data/           已处理数据；默认被 Git 忽略
-docs/           代码导读、实验报告与面试材料
-results/        简历版正式指标摘要
+docs/           代码导读、实验报告与复现材料
+results/        正式指标摘要
 scripts/        数据准备、建索引、训练、召回与精排入口
 src/data/       数据加载、时间切分和训练样本
 src/indexing/   Semantic ID 与 RQ-KMeans
@@ -144,8 +144,8 @@ python scripts/run_learned_reranker.py \
 
 - [文档导航](docs/README.md)：推荐阅读顺序
 - [项目演进](docs/project-evolution.md)：从 Demo 到正式系统的改进、实验与取舍
-- [面试指南](docs/interview-guide.md)：简历描述、项目讲法与常见追问
 - [实验结果](docs/results.md)：正式实验、消融和失败实验结论
 - [KuaiRec 实验](docs/kuairec-experiment.md)：数据协议与防泄漏设计
 - [RQ-KMeans 设计](docs/rq-kmeans.md)：工业级 Semantic ID 索引
 - [代码导读](docs/code-walkthrough.md)：核心模块与调用链
+
