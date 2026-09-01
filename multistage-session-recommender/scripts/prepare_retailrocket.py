@@ -33,7 +33,7 @@ TYPE_MAP = {"view": "clicks", "addtocart": "carts", "transaction": "orders"}
 
 def prepare_events(
     events: pd.DataFrame,
-    catalog_size: int = 3000,
+    catalog_size: int | None = 3000,
     max_sessions: int = 20000,
     min_session_length: int = 3,
 ) -> tuple[pd.DataFrame, dict]:
@@ -43,7 +43,8 @@ def prepare_events(
         events:
             RetailRocket 原始事件表，必须包含 ``timestamp、visitorid、event、itemid``。
         catalog_size:
-            按事件频次保留的热门商品数量上限。该限制在 Session 化之后应用，避免删除
+            按事件频次保留的热门商品数量上限。传入 ``None`` 时不做热门商品过滤，
+            保留选中 Session 中出现的全部商品。限制在 Session 化之后应用，避免删除
             长尾事件后人为制造超过 30 分钟的空档。
         max_sessions:
             最终最多保留的 Session 数，按照原始 Session 开始时间从早到晚选择。
@@ -74,9 +75,13 @@ def prepare_events(
     events["session"] = pd.factorize(keys)[0]
     original_starts = events.groupby("session")["timestamp"].min()
 
-    # Session 化后再限制商品目录；过滤商品会缩短 Session，因此需要重新检查长度。
-    popular = events["itemid"].value_counts().head(catalog_size).index
-    events = events[events["itemid"].isin(popular)].copy()
+    raw_items = int(events["itemid"].nunique())
+    # Session 化后再按可选上限限制商品目录；全量模式不删除任何长尾商品。
+    if catalog_size is not None:
+        if catalog_size < 1:
+            raise ValueError("catalog_size 必须为正整数或 None")
+        popular = events["itemid"].value_counts().head(catalog_size).index
+        events = events[events["itemid"].isin(popular)].copy()
     lengths = events.groupby("session").size()
     events = events[events["session"].isin(lengths[lengths >= min_session_length].index)]
 
@@ -102,6 +107,8 @@ def prepare_events(
         "types": {key: int(value) for key, value in output["type"].value_counts().items()},
         "dropped_ambiguous_target_sessions": int(dropped_ambiguous_sessions),
         "catalog_size_limit": catalog_size,
+        "catalog_policy": "full" if catalog_size is None else "top_frequency",
+        "raw_items": raw_items,
         "max_sessions": max_sessions,
         "min_session_length": min_session_length,
         "sessionization_before_catalog_filter": True,
@@ -116,8 +123,14 @@ def main():
     parser.add_argument(
         "--output", default="data/retailrocket/events.csv", help="标准化事件表输出路径"
     )
-    parser.add_argument(
+    catalog_group = parser.add_mutually_exclusive_group()
+    catalog_group.add_argument(
         "--catalog-size", type=int, default=3000, help="保留的热门商品数量上限"
+    )
+    catalog_group.add_argument(
+        "--full-catalog",
+        action="store_true",
+        help="保留选中 Session 中出现的全部商品",
     )
     parser.add_argument(
         "--max-sessions", type=int, default=20000, help="最终保留的最大 Session 数"
@@ -131,7 +144,7 @@ def main():
     events = pd.read_csv(args.events, usecols=["timestamp", "visitorid", "event", "itemid"])
     output, metadata = prepare_events(
         events,
-        catalog_size=args.catalog_size,
+        catalog_size=None if args.full_catalog else args.catalog_size,
         max_sessions=args.max_sessions,
         min_session_length=args.min_session_length,
     )

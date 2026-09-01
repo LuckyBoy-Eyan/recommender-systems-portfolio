@@ -6,7 +6,6 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
-from sklearn.preprocessing import StandardScaler
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -37,11 +36,13 @@ class NeuralFeaturePreprocessor:
 
     columns: list[str]
     log_columns: list[str]
-    scaler: StandardScaler
+    scaler: object
 
     @classmethod
     def fit(cls, frame: pd.DataFrame, columns: list[str]) -> "NeuralFeaturePreprocessor":
         """仅使用训练候选拟合 ``log1p`` 列和StandardScaler。"""
+        from sklearn.preprocessing import StandardScaler
+
         log_columns = [column for column in columns if _needs_log1p(column)]
         values = frame.reindex(columns=columns, fill_value=0).astype(np.float32).copy()
         for column in log_columns:
@@ -90,6 +91,91 @@ class SharedBottom(nn.Module):
         return torch.cat([tower(shared) for tower in self.towers], dim=1)
 
 
+def _expert(input_dim: int, hidden_dim: int) -> nn.Sequential:
+    return nn.Sequential(nn.Linear(input_dim, hidden_dim), nn.LayerNorm(hidden_dim), nn.ReLU())
+
+
+class MMoE(nn.Module):
+    """Multi-gate Mixture-of-Experts with one gate and tower per action."""
+
+    def __init__(
+        self, input_dim: int, hidden_dim: int = 64, experts: int = 8,
+        category_vocab_size: int = 0, type_vocab_size: int = 0,
+        category_embedding_dim: int = 16, type_embedding_dim: int = 8,
+    ):
+        super().__init__()
+        self.category_embedding = nn.Embedding(category_vocab_size, category_embedding_dim, padding_idx=0) if category_vocab_size else None
+        self.type_embedding = nn.Embedding(type_vocab_size, type_embedding_dim, padding_idx=0) if type_vocab_size else None
+        combined_dim = input_dim + (category_embedding_dim if category_vocab_size else 0) + (type_embedding_dim if type_vocab_size else 0)
+        self.experts = nn.ModuleList([_expert(combined_dim, hidden_dim) for _ in range(experts)])
+        self.gates = nn.ModuleList([nn.Linear(combined_dim, experts) for _ in ACTIONS])
+        self.towers = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+                nn.Linear(hidden_dim // 2, 1),
+            )
+            for _ in ACTIONS
+        ])
+
+    def forward(self, features: torch.Tensor, category=None, event_type=None) -> torch.Tensor:
+        if self.category_embedding is not None:
+            features = torch.cat([features, self.category_embedding(category)], dim=1)
+        if self.type_embedding is not None:
+            features = torch.cat([features, self.type_embedding(event_type)], dim=1)
+        expert_values = torch.stack([expert(features) for expert in self.experts], dim=1)
+        outputs = []
+        for gate, tower in zip(self.gates, self.towers):
+            weights = torch.softmax(gate(features), dim=1).unsqueeze(2)
+            outputs.append(tower((expert_values * weights).sum(1)))
+        return torch.cat(outputs, dim=1)
+
+
+class PLE(nn.Module):
+    """Single-level PLE with shared and task-specific experts."""
+
+    def __init__(
+        self, input_dim: int, hidden_dim: int = 64,
+        shared_experts: int = 2, task_experts: int = 2,
+        category_vocab_size: int = 0, type_vocab_size: int = 0,
+        category_embedding_dim: int = 16, type_embedding_dim: int = 8,
+    ):
+        super().__init__()
+        self.category_embedding = nn.Embedding(category_vocab_size, category_embedding_dim, padding_idx=0) if category_vocab_size else None
+        self.type_embedding = nn.Embedding(type_vocab_size, type_embedding_dim, padding_idx=0) if type_vocab_size else None
+        combined_dim = input_dim + (category_embedding_dim if category_vocab_size else 0) + (type_embedding_dim if type_vocab_size else 0)
+        self.shared = nn.ModuleList([_expert(combined_dim, hidden_dim) for _ in range(shared_experts)])
+        self.specific = nn.ModuleList([
+            nn.ModuleList([_expert(combined_dim, hidden_dim) for _ in range(task_experts)])
+            for _ in ACTIONS
+        ])
+        gate_width = shared_experts + task_experts
+        self.gates = nn.ModuleList([nn.Linear(combined_dim, gate_width) for _ in ACTIONS])
+        self.towers = nn.ModuleList([
+            nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim // 2),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+                nn.Linear(hidden_dim // 2, 1),
+            )
+            for _ in ACTIONS
+        ])
+
+    def forward(self, features: torch.Tensor, category=None, event_type=None) -> torch.Tensor:
+        if self.category_embedding is not None:
+            features = torch.cat([features, self.category_embedding(category)], dim=1)
+        if self.type_embedding is not None:
+            features = torch.cat([features, self.type_embedding(event_type)], dim=1)
+        shared_values = [expert(features) for expert in self.shared]
+        outputs = []
+        for task, (gate, tower) in enumerate(zip(self.gates, self.towers)):
+            values = torch.stack(shared_values + [expert(features) for expert in self.specific[task]], dim=1)
+            weights = torch.softmax(gate(features), dim=1).unsqueeze(2)
+            outputs.append(tower((values * weights).sum(1)))
+        return torch.cat(outputs, dim=1)
+
+
 @dataclass
 class NeuralRankerBundle:
     """封装神经模型、特征预处理器及训练审计信息。"""
@@ -103,23 +189,24 @@ class NeuralRankerBundle:
 
 
 def build_task_targets(labeled: pd.DataFrame) -> tuple[torch.Tensor, torch.Tensor]:
-    """把单任务观测行转换为三任务标签与Mask。
+    """把下一次物品-行为观测转换为三个联合监督标签。
 
-    每行只对 ``target_type`` 对应任务设置 ``mask=1``；其他任务属于未观测，
-    不能错误地写成负标签。
+    正例候选仅在真实下一行为对应任务上为1；其余任务以及所有非目标候选为0。
+    三个任务均参与训练，使三个塔学习同一候选集合上的下一物品-行为联合分布。
     """
     labels = torch.zeros((len(labeled), len(ACTIONS)), dtype=torch.float32)
-    masks = torch.zeros_like(labels, dtype=torch.bool)
+    masks = torch.ones_like(labels, dtype=torch.bool)
     action_indices = labeled["target_type"].map(ACTION_TO_INDEX)
     if action_indices.isna().any():
         unknown = sorted(labeled.loc[action_indices.isna(), "target_type"].unique())
         raise ValueError(f"存在未知目标行为类型: {unknown}")
     rows = torch.arange(len(labeled))
     columns = torch.tensor(action_indices.to_numpy(), dtype=torch.long)
-    labels[rows, columns] = torch.tensor(
-        labeled["label"].to_numpy(), dtype=torch.float32
-    )
-    masks[rows, columns] = True
+    positive = torch.tensor(labeled["label"].to_numpy(), dtype=torch.float32)
+    # clicks塔覆盖全部正交互；carts塔覆盖加购和购买；orders塔仅覆盖购买。
+    labels[:, 0] = positive
+    labels[:, 1] = positive * (columns >= ACTION_TO_INDEX["carts"]).float()
+    labels[:, 2] = positive * (columns >= ACTION_TO_INDEX["orders"]).float()
     return labels, masks
 
 
@@ -145,7 +232,11 @@ def _build_neural_model(
     """
     if method == "shared_bottom":
         return SharedBottom(input_dim, hidden_dims)
-    raise ValueError("排序方法只支持 shared_bottom")
+    if method == "mmoe":
+        return MMoE(input_dim, hidden_dims[0])
+    if method == "ple":
+        return PLE(input_dim, hidden_dims[0])
+    raise ValueError("排序方法只支持 shared_bottom/mmoe/ple")
 
 
 def train_neural_ranker(
@@ -159,10 +250,9 @@ def train_neural_ranker(
     learning_rate: float = 0.001,
     weight_decay: float = 0.0001,
 ) -> NeuralRankerBundle:
-    """用任务Mask和任务内类别权重训练Shared-Bottom。
+    """用三任务联合标签和任务内类别权重训练神经排序器。
 
-    每个任务的BCE只在对应 ``mask=1`` 的候选上计算，并使用该任务训练负例数/正例数
-    作为 ``pos_weight``。
+    每行同时监督三个任务，并使用各任务训练负例数/正例数作为 ``pos_weight``。
     """
     if epochs < 1 or batch_size < 1 or learning_rate <= 0 or weight_decay < 0:
         raise ValueError("神经排序器训练参数非法")

@@ -1,4 +1,6 @@
-# RetailRocket 公开数据实验
+# RetailRocket 早期 Top3000 实验（历史归档）
+
+> 本文记录早期 Top3000、四路召回和 Shared-Bottom 实验，不代表当前正式系统。当前结果请阅读[完整实验报告](complete-experiment-report.md)与[结果摘要](results.md)。
 
 ## 数据处理
 

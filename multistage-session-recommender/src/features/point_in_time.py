@@ -106,6 +106,11 @@ def build_point_in_time_dataset(
         history_batch = sample_history[sample_history["session"].isin(session_ids)]
         # 严格小于快照时间，意味着目标所在时间桶内的全局事件不会进入统计。
         reference_events = all_events[all_events["ts"] < snapshot_ts]
+        # 当前可召回目录由快照前已出现商品与当前 Session 已显式交互商品组成。
+        # 二者在请求时都已可见，因此不会借用未来目标构造目录。
+        catalog = set(reference_events["aid"].astype(int)) | set(
+            history_batch["aid"].astype(int)
+        )
 
         max_reference_ts = None if reference_events.empty else int(reference_events["ts"].max())
         min_target_ts = int(label_batch["target_ts"].min())
@@ -136,6 +141,9 @@ def build_point_in_time_dataset(
             embedding,
             embedding_source=embedding_method,
         )
+        recalled_items = set(recalled["aid"].astype(int))
+        if not recalled_items.issubset(catalog):
+            raise AssertionError("recall produced an item outside the causal catalog")
         features = build_candidate_features(history_batch, recalled, reference_events)
         # snapshot_ts 仅用于审计和追踪，排序模型会把它排除在训练特征之外。
         features["snapshot_ts"] = int(snapshot_ts)
@@ -149,6 +157,16 @@ def build_point_in_time_dataset(
                 "min_target_ts": min_target_ts,
                 "sessions": len(session_ids),
                 "reference_events": len(reference_events),
+                "catalog_items": len(catalog),
+                "recalled_unique_items": len(recalled_items),
+                "candidate_catalog_coverage": (
+                    len(recalled_items) / len(catalog) if catalog else 0.0
+                ),
+                "mean_candidates_per_session": (
+                    recalled.groupby("session")["aid"].nunique().mean()
+                    if not recalled.empty
+                    else 0.0
+                ),
                 "embedding_method": embedding_method,
                 "duration_seconds": time.perf_counter() - snapshot_started,
             }

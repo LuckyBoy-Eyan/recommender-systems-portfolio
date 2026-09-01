@@ -1,0 +1,20 @@
+{
+  "model": "ple_v3",
+  "fusion_input": "sigmoid_task_probabilities",
+  "weights": {
+    "clicks": 0.05,
+    "carts": 0.30,
+    "orders": 0.40
+  },
+  "selection_metric": "macro_weighted_hit_rate_at_20",
+  "validation": {
+    "candidate_hit_rate": 0.844734998832594,
+    "hit_rate_at_20": 0.6151062339481672,
+    "macro_weighted_hit_rate_at_20": 0.8762233618390562,
+    "mrr_at_20": 0.3747555315253299,
+    "ndcg_at_20": 0.42916780792288356,
+    "novel_hit_rate_at_20": 0.2685466021805066
+  },
+  "rrf_role": "independent_baseline_only",
+  "test_evaluated": false
+}

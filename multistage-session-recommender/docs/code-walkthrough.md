@@ -1,5 +1,7 @@
 # 多阶段会话推荐系统：代码导读与核心调用链
 
+> 本文部分内容对应早期流水线；当前正式实验新增 `src/recall/full_catalog.py`、`src/recall/item2vec_ann.py`、`src/recall/two_tower_v2.py`、`scripts/train_multitask_ranker.py` 和 `src/evaluation/unified_toplist.py`。最终调用顺序以[完整实验报告](complete-experiment-report.md)为准。
+
 这份文档按“第一次阅读项目代码”的顺序解释正式流水线。内容包括：
 
 - 数据表在每个阶段的含义；

@@ -1,0 +1,22 @@
+{
+  "package": "windows_two_tower_v2_training",
+  "model": {
+    "batch_size": 1024,
+    "gru_hidden_dim": 128,
+    "retrieval_dim": 64,
+    "item_mlp": [256, 128, 64],
+    "hard_negatives_per_sample": 96,
+    "topk": 300,
+    "max_epochs": 15,
+    "min_epochs": 5,
+    "early_stopping_patience": 4
+  },
+  "item2vec": {
+    "dimensions": 128,
+    "min_count": 5,
+    "negative_samples": 15,
+    "subsample": 0.00003,
+    "selected_epoch": 10
+  },
+  "test_evaluated": false
+}

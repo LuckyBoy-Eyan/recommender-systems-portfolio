@@ -4,6 +4,7 @@
 召回图防泄漏以及负采样行为。
 """
 
+import numpy as np
 import pandas as pd
 import torch
 
@@ -13,16 +14,30 @@ from src.evaluation.metrics import candidate_recall_by_action
 from src.ranking.model import heuristic_score, sample_hard_negatives
 from src.recall.sources import (
     _build_skipgram_pairs,
+    _exact_topk_cosine_neighbors,
     _sample_negative_items,
     build_item2vec_neighbors,
     build_itemcf,
 )
 from scripts.prepare_retailrocket import prepare_events
+from scripts.preprocess_full_retailrocket import preprocess_events
+from scripts.preprocess_item_metadata import build_category_paths, clean_state_changes
+from scripts.build_sequence_samples import (
+    build_evaluation_samples,
+    build_training_samples,
+)
+from scripts.build_asof_item_features import enrich_asof
+from src.evaluation.recall_diagnostics import conditional_auc_gauc, route_diagnostics
+from src.recall.full_catalog import build_directional_transitions
+from src.recall.item2vec_ann import Item2VecANN, Item2VecEmbeddings, train_item2vec_embeddings
+from src.recall.two_tower import causal_inbatch_mask
+from src.ranking.neural import MMoE, PLE
 from scripts.run_pipeline import (
     configured_rankers,
     select_formal_and_warmup_events,
     validate_data_profile,
 )
+from scripts.build_rolling_oof_candidates import compact_candidates, temporal_folds
 
 
 def _make_boundary_test_events(num_sessions: int = 10) -> pd.DataFrame:
@@ -106,6 +121,165 @@ def test_retailrocket_defaults_use_current_data_scale():
     """默认预处理口径必须保持 Top3000 和 20000 个 Session。"""
     defaults = prepare_events.__defaults__
     assert defaults == (3000, 20000, 3)
+
+
+def test_full_catalog_preparation_keeps_long_tail_items():
+    """全量模式不得因商品频次删除长尾事件。"""
+    minute = 60 * 1000
+    raw = pd.DataFrame(
+        [
+            (0, 0, "view", 1),
+            (minute, 0, "view", 2),
+            (2 * minute, 0, "transaction", 999),
+            (0, 1, "view", 1),
+            (minute, 1, "view", 2),
+            (2 * minute, 1, "transaction", 3),
+        ],
+        columns=["timestamp", "visitorid", "event", "itemid"],
+    )
+    prepared, metadata = prepare_events(
+        raw, catalog_size=None, max_sessions=10, min_session_length=3
+    )
+    assert set(prepared["aid"]) == {1, 2, 3, 999}
+    assert metadata["catalog_policy"] == "full"
+    assert metadata["catalog_size_limit"] is None
+
+
+def test_full_preprocessing_keeps_reference_only_sessions():
+    """短 Session 和末时间并列 Session 保留作参考，但不产生标签。"""
+    raw = pd.DataFrame(
+        [
+            (0, 1, "view", 10, np.nan),
+            (1, 1, "view", 11, np.nan),
+            (10, 2, "view", 20, np.nan),
+            (11, 2, "view", 21, np.nan),
+            (11, 2, "addtocart", 22, np.nan),
+            (20, 3, "view", 30, np.nan),
+            (21, 3, "view", 31, np.nan),
+            (22, 3, "transaction", 32, 7),
+            (30, 4, "view", 40, np.nan),
+            (31, 4, "view", 41, np.nan),
+            (32, 4, "transaction", 42, 8),
+            (40, 5, "view", 50, np.nan),
+            (41, 5, "view", 51, np.nan),
+            (42, 5, "transaction", 52, 9),
+        ],
+        columns=["timestamp", "visitorid", "event", "itemid", "transactionid"],
+    )
+    events, sessions, labels, report = preprocess_events(
+        raw, train_ratio=0.34, valid_ratio=0.34
+    )
+    assert len(events) == len(raw)
+    assert len(labels) == 3
+    reasons = set(sessions.loc[~sessions["label_eligible"], "ineligible_reason"])
+    assert reasons == {"too_short", "ambiguous_last_timestamp"}
+    assert report["session_lengths"]["reference_only_sessions"] == 2
+
+
+def test_item_state_cleaning_removes_conflicts_and_repeated_states():
+    frame = pd.DataFrame(
+        [(1, 10, 2), (1, 10, 2), (2, 10, 2), (3, 10, 3), (3, 10, 4)],
+        columns=["timestamp", "itemid", "categoryid"],
+    )
+    cleaned, report = clean_state_changes(frame, "categoryid")
+    assert cleaned[["timestamp", "categoryid"]].values.tolist() == [[1, 2]]
+    assert report["exact_duplicates"] == 1
+    assert report["conflicting_rows_removed"] == 2
+    assert report["consecutive_repeats_removed"] == 1
+
+
+def test_category_paths_include_ancestors_and_detect_unknown_categories():
+    tree = pd.DataFrame([(1, np.nan), (2, 1), (3, 2)], columns=["categoryid", "parentid"])
+    paths, report = build_category_paths(tree, {3, 99})
+    by_category = paths.set_index("categoryid")
+    assert by_category.loc[3, "category_path"] == [1, 2, 3]
+    assert by_category.loc[3, "category_depth"] == 2
+    assert by_category.loc[99, "category_path"] == [99]
+    assert report["observed_categories_missing_from_tree"] == 1
+
+
+def test_sequence_samples_use_strict_history_and_cap_long_sessions():
+    events = pd.DataFrame(
+        [
+            (0, 10, 1, "clicks", 0),
+            (0, 11, 2, "clicks", 1),
+            (0, 12, 3, "carts", 2),
+            (0, 13, 4, "orders", 3),
+            (0, 14, 5, "clicks", 4),
+        ],
+        columns=["session", "aid", "ts", "type", "event_order"],
+    )
+    samples, report = build_training_samples(
+        events, {0}, min_history=2, max_history=2, max_samples_per_session=2
+    )
+    assert len(samples) == 2
+    assert report["candidate_samples"] == 3
+    assert report["capped_sessions"] == 1
+    assert samples.iloc[-1]["history_aids"] == [12, 13]
+
+
+def test_sequence_samples_skip_tied_target_timestamps():
+    events = pd.DataFrame(
+        [
+            (0, 10, 1, "clicks", 0),
+            (0, 11, 2, "clicks", 1),
+            (0, 12, 3, "carts", 2),
+            (0, 13, 3, "orders", 3),
+            (0, 14, 4, "clicks", 4),
+        ],
+        columns=["session", "aid", "ts", "type", "event_order"],
+    )
+    samples, report = build_training_samples(events, {0})
+    assert samples["target_aid"].tolist() == [14]
+    assert report["skipped_tied_targets"] == 2
+
+
+def test_asof_item_features_never_use_future_state():
+    queries = pd.DataFrame([(10, 100, 5), (11, 100, 15), (12, 200, 5)], columns=["session", "aid", "ts"])
+    categories = pd.DataFrame(
+        [(10, 100, 1), (20, 100, 2)], columns=["timestamp", "itemid", "categoryid"]
+    )
+    availability = pd.DataFrame(
+        [(12, 100, 1)], columns=["timestamp", "itemid", "available"]
+    )
+    paths = pd.DataFrame(
+        [(1, 1, 0, [1], True), (2, 2, 0, [2], True)],
+        columns=["categoryid", "root_categoryid", "category_depth", "category_path", "in_tree"],
+    )
+    enriched = enrich_asof(queries, categories, availability, paths)
+    assert enriched["categoryid"].tolist() == [-1, 1, -1]
+    assert enriched["available"].tolist() == [-1, 1, -1]
+    assert enriched.loc[1, "category_state_ts"] == 10
+    assert enriched.loc[1, "availability_state_ts"] == 12
+
+
+def test_directional_transition_respects_order_and_action_weight():
+    events = pd.DataFrame(
+        [(0, 1, 1, "clicks", 0), (0, 2, 2, "orders", 1), (0, 3, 3, "clicks", 2)],
+        columns=["session", "aid", "ts", "type", "event_order"],
+    )
+    transitions = build_directional_transitions(events)
+    assert transitions[1][0][0] == 2
+    assert transitions[2][0][0] == 3
+    assert 1 not in {aid for aid, _ in transitions.get(2, [])}
+
+
+def test_recall_diagnostics_report_exclusive_hits_and_conditional_auc():
+    recalled = pd.DataFrame(
+        [
+            (0, 10, "a", 1, 0.9), (0, 11, "a", 2, 0.1),
+            (0, 10, "b", 1, 0.8), (1, 20, "b", 1, 0.7),
+            (1, 21, "b", 2, 0.6),
+        ],
+        columns=["session", "aid", "source", "source_rank", "source_score"],
+    )
+    labels = pd.DataFrame([(0, 10), (1, 20)], columns=["session", "target_aid"])
+    diagnostics = route_diagnostics(recalled, labels)
+    auc = conditional_auc_gauc(recalled, labels)
+    assert diagnostics["union_recall"] == 1.0
+    assert diagnostics["sources"]["b"]["exclusive_hits"] == 1
+    assert auc["a"]["candidate_auc"] == 1.0
+    assert auc["b"]["session_gauc"] == 1.0
 
 
 def test_data_profile_rejects_mismatched_preprocessed_data(tmp_path):
@@ -240,7 +414,23 @@ def test_point_in_time_snapshot_excludes_future_events():
     )
     assert audit.loc[0, "max_reference_ts"] == 20
     assert audit.loc[0, "max_reference_ts"] < audit.loc[0, "min_target_ts"]
+    assert audit.loc[0, "catalog_items"] == 3
+    assert 0.0 <= audit.loc[0, "candidate_catalog_coverage"] <= 1.0
     assert 999 not in set(recalled["aid"])
+
+
+def test_exact_neighbor_search_is_blocked_and_deterministic():
+    """分块精确检索应返回正确近邻，并用商品 ID 稳定处理并列。"""
+    embeddings = np.array(
+        [[1.0, 0.0], [0.8, 0.2], [0.0, 1.0], [0.8, 0.2]], dtype=np.float32
+    )
+    embeddings /= np.linalg.norm(embeddings, axis=1, keepdims=True)
+    item_ids = np.array([10, 20, 30, 15])
+    neighbors = _exact_topk_cosine_neighbors(
+        embeddings, item_ids, max_neighbors=2, max_similarity_bytes=16
+    )
+    assert [aid for aid, _ in neighbors[10]] == [15, 20]
+    assert all(aid != source for source, values in neighbors.items() for aid, _ in values)
 
 
 def test_target_is_not_used_in_recall_graph():
@@ -367,3 +557,106 @@ def test_negative_sampling_excludes_all_observed_contexts_and_self():
         generator=generator,
     )
     assert not blocked[centers.unsqueeze(1), negatives].any()
+
+
+def test_scalable_item2vec_ann_trains_caches_and_recalls(tmp_path):
+    events = pd.DataFrame(
+        [
+            (0, 10, 1, "clicks"), (0, 11, 2, "clicks"), (0, 12, 3, "orders"),
+            (1, 10, 4, "clicks"), (1, 11, 5, "carts"), (1, 13, 6, "orders"),
+            (2, 12, 7, "clicks"), (2, 11, 8, "clicks"), (2, 13, 9, "orders"),
+        ],
+        columns=["session", "aid", "ts", "type"],
+    )
+    embeddings = train_item2vec_embeddings(
+        events,
+        dimensions=8,
+        window=2,
+        negative_samples=2,
+        epochs=1,
+        batch_size=8,
+        min_count=1,
+        seed=7,
+        num_threads=1,
+    )
+    cache = tmp_path / "item2vec.npz"
+    embeddings.save(cache)
+    restored = Item2VecEmbeddings.load(cache)
+    assert restored.item_ids.tolist() == embeddings.item_ids.tolist()
+    assert np.allclose(restored.vectors, embeddings.vectors)
+
+    samples = pd.DataFrame(
+        {
+            "session": [100, 101],
+            "history_aids": [np.array([10, 11]), np.array([12, 13])],
+            "target_aid": [12, 11],
+        }
+    )
+    ann = Item2VecANN(restored, hnsw_m=4, ef_construction=20, ef_search=20)
+    recalled = ann.recall(samples, topk=3)
+    assert set(recalled["source"]) == {"item2vec"}
+    assert recalled.groupby("session").size().to_dict() == {100: 3, 101: 3}
+    auc = ann.sampled_auc_gauc(samples, negatives_per_session=5, seed=9)
+    assert auc["eligible_sessions"] == 2
+    assert 0.0 <= auc["sampled_auc"] <= 1.0
+
+
+def test_two_tower_inbatch_mask_blocks_future_and_duplicate_items():
+    aids = torch.tensor([10, 20, 10])
+    timestamps = torch.tensor([100, 200, 300])
+    mask = causal_inbatch_mask(aids, timestamps)
+    assert mask.diagonal().all()
+    assert not mask[0, 1]  # future target occurrence
+    assert not mask[0, 2]  # future and duplicate
+    assert mask[1, 0]      # past item is a valid negative
+    assert not mask[2, 0]  # duplicate item is not a false negative
+
+
+def test_rolling_oof_folds_are_ordered_after_warmup():
+    samples = pd.DataFrame({"target_ts": np.arange(100, 200)})
+    folds = temporal_folds(samples, folds=4, warmup_fraction=0.2)
+    assert len(folds) == 4
+    assert folds[0][0] >= int(samples["target_ts"].quantile(0.2))
+    assert all(start < end for start, end in folds)
+    assert all(left[1] <= right[0] for left, right in zip(folds, folds[1:]))
+
+
+def test_oof_compaction_injects_positive_and_caps_negatives():
+    raw = pd.DataFrame(
+        [(7, aid, "itemcf", rank, 1.0 / rank) for rank, aid in enumerate(range(20, 26), 1)],
+        columns=["session", "aid", "source", "source_rank", "source_score"],
+    )
+    samples = pd.DataFrame(
+        {"session": [7], "target_aid": [99], "target_type": ["orders"]}
+    )
+    compact, hits = compact_candidates(raw, samples, max_negatives=2, topk=50)
+    assert hits == 0
+    assert len(compact) == 3
+    assert compact["label"].sum() == 1
+    assert 99 in set(compact["aid"])
+
+
+def test_validation_compaction_is_label_blind():
+    raw = pd.DataFrame(
+        [(7, aid, "itemcf", rank, 1.0 / rank) for rank, aid in enumerate([20, 21, 99], 1)],
+        columns=["session", "aid", "source", "source_rank", "source_score"],
+    )
+    samples = pd.DataFrame(
+        {"session": [7], "target_aid": [99], "target_type": ["orders"]}
+    )
+    compact, hits = compact_candidates(
+        raw, samples, max_negatives=2, topk=50,
+        inject_missing_positives=False, prioritize_positives=False,
+    )
+    assert hits == 1
+    assert len(compact) == 2
+    assert compact["label"].sum() == 0
+    assert 99 not in set(compact["aid"])
+
+
+def test_mmoe_and_ple_return_three_task_logits():
+    features = torch.randn(7, 12)
+    for model in (MMoE(12, hidden_dim=8, experts=3), PLE(12, hidden_dim=8)):
+        logits = model(features)
+        assert logits.shape == (7, 3)
+        assert torch.isfinite(logits).all()

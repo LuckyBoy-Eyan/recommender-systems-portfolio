@@ -19,6 +19,46 @@ from torch import nn
 from torch.nn import functional as F
 
 
+def _exact_topk_cosine_neighbors(
+    embeddings: np.ndarray,
+    item_ids: np.ndarray,
+    max_neighbors: int,
+    max_similarity_bytes: int = 128 * 1024 * 1024,
+) -> dict[int, list[tuple[int, float]]]:
+    """分块计算精确余弦 Top-K，避免物化完整 ``商品数 × 商品数`` 矩阵。"""
+    if max_neighbors < 1:
+        raise ValueError("max_neighbors 必须为正数")
+    if len(embeddings) != len(item_ids):
+        raise ValueError("embeddings 与 item_ids 行数必须一致")
+    item_count = len(item_ids)
+    if item_count < 2:
+        return {int(aid): [] for aid in item_ids}
+    embeddings = np.asarray(embeddings, dtype=np.float32)
+    item_ids = np.asarray(item_ids)
+    topk = min(max_neighbors, item_count - 1)
+    # 每个分块最多占用约 128 MiB；完整目录扩大后内存仍与商品数线性增长。
+    bytes_per_row = item_count * np.dtype(np.float32).itemsize
+    batch_size = max(1, min(1024, max_similarity_bytes // max(bytes_per_row, 1)))
+    output: dict[int, list[tuple[int, float]]] = {}
+    for start in range(0, item_count, batch_size):
+        stop = min(start + batch_size, item_count)
+        similarities = embeddings[start:stop] @ embeddings.T
+        local_rows = np.arange(stop - start)
+        similarities[local_rows, np.arange(start, stop)] = -np.inf
+        for local_index, global_index in enumerate(range(start, stop)):
+            row = similarities[local_index]
+            if topk < item_count - 1:
+                selected = np.argpartition(-row, topk - 1)[:topk]
+            else:
+                selected = np.flatnonzero(np.isfinite(row))
+            # 相似度并列时按原始商品 ID 排序，确保不同机器输出稳定。
+            selected = selected[np.lexsort((item_ids[selected], -row[selected]))]
+            output[int(item_ids[global_index])] = [
+                (int(item_ids[right]), float(row[right])) for right in selected
+            ]
+    return output
+
+
 def build_popularity(events: pd.DataFrame) -> list[int]:
     """按照历史事件次数生成全局热门商品列表。
 
@@ -107,17 +147,7 @@ def build_svd_neighbors(
     embeddings = TruncatedSVD(components, random_state=seed).fit_transform(matrix.T)
     # 归一化后，向量内积等价于余弦相似度。
     embeddings = normalize(embeddings)
-    similarities = embeddings @ embeddings.T
-    output = {}
-    for index, aid in enumerate(item_ids):
-        order = np.argsort(-similarities[index])
-        neighbors = [
-            (int(item_ids[right]), float(similarities[index, right]))
-            for right in order
-            if right != index
-        ][:max_neighbors]
-        output[int(aid)] = neighbors
-    return output
+    return _exact_topk_cosine_neighbors(embeddings, item_ids, max_neighbors)
 
 
 def _build_skipgram_pairs(
@@ -297,10 +327,11 @@ def build_item2vec_neighbors(
     if centers.numel() == 0:
         return {}
     vocabulary_size = len(item_ids)
-    blocked_contexts = torch.zeros(
-        (vocabulary_size, vocabulary_size), dtype=torch.bool
-    )
+    blocked_contexts = None
     if exclude_positive_contexts:
+        blocked_contexts = torch.zeros(
+            (vocabulary_size, vocabulary_size), dtype=torch.bool
+        )
         blocked_contexts[centers, contexts] = True
         blocked_contexts.fill_diagonal_(True)
         # 极小词表中某个中心可能与全部商品都形成过正关系，此时不存在合法负例。
@@ -346,6 +377,7 @@ def build_item2vec_neighbors(
                 context_batch = contexts[batch_indices]
                 weight_batch = pair_weights[batch_indices]
                 if exclude_positive_contexts:
+                    assert blocked_contexts is not None
                     negative_batch = _sample_negative_items(
                         center_batch,
                         negative_distribution,
@@ -380,17 +412,7 @@ def build_item2vec_neighbors(
         torch.set_num_threads(previous_threads)
 
     embeddings = F.normalize(input_embeddings.weight.detach(), p=2, dim=1).cpu().numpy()
-    similarities = embeddings @ embeddings.T
-    output: dict[int, list[tuple[int, float]]] = {}
-    for index, aid in enumerate(item_ids):
-        # aid 作为相似度并列时的稳定次序，保证输出完全可复现。
-        order = np.lexsort((item_ids, -similarities[index]))
-        output[int(aid)] = [
-            (int(item_ids[right]), float(similarities[index, right]))
-            for right in order
-            if right != index
-        ][:max_neighbors]
-    return output
+    return _exact_topk_cosine_neighbors(embeddings, item_ids, max_neighbors)
 
 
 def build_embedding_neighbors(

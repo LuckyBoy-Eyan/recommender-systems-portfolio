@@ -373,6 +373,17 @@ def main():
             "ranker": ranker_metrics[primary_ranker],
             "rankers": ranker_metrics,
             "sources": source_recall(recalled, labels, config["topk"]),
+            "catalog": {
+                "min_items": int(audit["catalog_items"].min()),
+                "max_items": int(audit["catalog_items"].max()),
+                "mean_items": float(audit["catalog_items"].mean()),
+                "mean_candidate_catalog_coverage": float(
+                    audit["candidate_catalog_coverage"].mean()
+                ),
+                "mean_candidates_per_session": float(
+                    audit["mean_candidates_per_session"].mean()
+                ),
+            },
             "point_in_time_audit": {
                 "snapshots": len(audit),
                 "all_snapshots_causal": bool(
@@ -403,6 +414,7 @@ def main():
     metrics = {
         "data": {
             "events": len(events),
+            "items": int(events["aid"].nunique()),
             "input_events": input_events,
             "dropped_ambiguous_target_sessions": dropped_ambiguous_sessions,
             "formal_sessions": int(events["session"].nunique()),

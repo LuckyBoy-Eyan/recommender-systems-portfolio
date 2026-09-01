@@ -1,4 +1,4 @@
-"""验证Shared-Bottom的任务Mask、训练及统一输出。"""
+"""验证神经排序器的三任务联合监督、训练及统一输出。"""
 
 import numpy as np
 import pandas as pd
@@ -31,14 +31,14 @@ def _make_labeled_candidates() -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def test_multitask_targets_mask_unobserved_tasks_instead_of_marking_negative():
-    """每行只能监督自己的目标任务，另外两个任务必须保持未观测。"""
+def test_multitask_targets_jointly_supervise_all_three_tasks():
+    """每行应同时监督三塔，正例只落在真实下一行为对应的塔。"""
     labeled = _make_labeled_candidates()
     labels, masks = build_task_targets(labeled)
     assert labels.shape == masks.shape == (12, 3)
-    assert masks.sum(dim=1).tolist() == [1] * 12
-    assert labels.sum(dim=0).tolist() == [1.0, 1.0, 1.0]
-    assert masks.sum(dim=0).tolist() == [4, 4, 4]
+    assert masks.sum(dim=1).tolist() == [3] * 12
+    assert labels.sum(dim=0).tolist() == [3.0, 2.0, 1.0]
+    assert masks.sum(dim=0).tolist() == [12, 12, 12]
 
 
 def test_shared_bottom_returns_three_task_logits():
