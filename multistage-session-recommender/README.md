@@ -110,7 +110,6 @@ python -m pytest -q
 
 - [完整实验报告](docs/complete-experiment-report.md)
 - [结果摘要](docs/results.md)
-- [面试指南](docs/interview-guide.md)
 - [项目演进](docs/project-evolution.md)
 - [代码导读](docs/code-walkthrough.md)
 - [历史实验归档](docs/experiments/README.md)

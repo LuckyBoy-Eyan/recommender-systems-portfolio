@@ -9,7 +9,7 @@
 - 构建候选、物品、Session、转化率、交叉特征和时间新近性特征
 - 训练 clicks/carts/orders 分目标 Hard Negative 排序模型
 - 支持 Weighted Recall@20 离线评估
-- 提供 OTTO 风格真实数据加载器、测试、实验结果和面试文档
+- 提供 OTTO 风格真实数据加载器、测试、实验结果和技术文档
 
 ## 真实数据扩展
 

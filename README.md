@@ -44,7 +44,7 @@ RRF 在 Top20/50 覆盖率和全候选 AUC/GAUC/UAUC 上更强；项目保留这
 
 1. [多阶段会话推荐 README](multistage-session-recommender/README.md)
 2. [多阶段推荐完整实验报告](multistage-session-recommender/docs/complete-experiment-report.md)
-3. [多阶段推荐面试指南](multistage-session-recommender/docs/interview-guide.md)
+3. [多阶段推荐项目演进](multistage-session-recommender/docs/project-evolution.md)
 4. [MiniTIGER README](mini-tiger-generative-recommender/README.md)
 
 ## 本地检查
