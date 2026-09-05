@@ -111,4 +111,4 @@ docs/             架构、数据协议和实验说明
 tests/            单元与回归测试
 ```
 
-详见[文档导航](docs/README.md)。
+详见[全量实验报告](docs/experiment-report.md)和[文档导航](docs/README.md)。

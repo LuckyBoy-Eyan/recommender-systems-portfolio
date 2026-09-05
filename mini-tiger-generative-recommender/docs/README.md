@@ -8,3 +8,4 @@
 4. [实验结果](results.md)：当前 smoke test 与下一轮全量实验；
 5. [RQ-KMeans](rq-kmeans.md)：Semantic ID 索引细节；
 6. [CUDA 运行指南](windows-cuda.md)：Windows NVIDIA 环境。
+7. [全量实验报告](experiment-report.md)：数据、SID、训练参数、模型演进与公平结果。
