@@ -1,151 +1,114 @@
-# MiniTIGER：生成式多阶段推荐系统
+# MiniTIGER：基于 Semantic ID 的生成式召回
 
-这是一个面向 KuaiRec Big Matrix 的生成式序列推荐项目。系统不直接预测 Item ID，
-而是根据用户历史自回归生成物品的多级 Semantic ID，再由 SASRec 对生成候选精排。
+MiniTIGER 在 KuaiRec Big Matrix 上探索一个问题：只使用内容语义构建物品 Semantic ID，
+再通过 Transformer 自回归生成下一个正反馈物品，能否形成有效的端到端生成式召回系统。
+当前公开版本只包含召回，不包含精排或融合模型。
 
-## 最终系统
-
-```text
-KuaiRec 行为与内容特征
-  -> Behavior-aware RQ-KMeans
-  -> 唯一 Semantic ID
-
-用户历史
-  -> Transformer 编码器
-  -> GRU 自回归生成 Semantic ID
-  -> Top-200 候选
-  -> SASRec + 学习式精排
-  -> Top-20
-```
-
-生成模型与 SASRec 均约 163 万参数，避免把模型容量差异误认为编码收益。
-
-## 数据与结果
-
-项目使用快手公开的 KuaiRec Big Matrix：
-
-| 项目 | 数值 |
-|---|---:|
-| 正反馈行为 | 6,309,308 |
-| 用户 | 7,174 |
-| 视频 | 9,438 |
-| Semantic ID 码本 | `[64, 64, 64]` |
-| RQ 碰撞率 | 0 |
-| 三级码本利用率 | 100% / 100% / 100% |
-
-最终测试集结果：
-
-| 阶段 | Recall@20 | NDCG@20 | Candidate Recall@200 |
-|---|---:|---:|---:|
-| 生成召回 | 0.196822 | 0.095620 | 0.561890 |
-| 固定融合精排 | 0.213131 | 0.104453 | 0.561890 |
-| 学习式精排 | **0.213688** | **0.104760** | 0.561890 |
-
-完整诊断还验证了 Exact 与 Beam=500 的 Recall@200 完全相同，说明主要瓶颈不是
-Beam 剪枝，而是第一级 Semantic ID 路由预测。失败的损失加权和蒸馏实验没有放入
-最终运行目录，只在[实验结果](docs/results.md)中保留结论。
-
-## 为什么属于生成式推荐
-
-下一物品概率被分解为：
+## 系统结构
 
 ```text
-P(item | history)
-  = P(c1 | history)
-  * P(c2 | history, c1)
-  * P(c3 | history, c1, c2)
-  * P(tail | history, c1, c2, c3)
+视频标题与类目
+      ↓
+Sentence-T5（768 维）
+      ↓
+PCA（128 维，无白化）+ L2 Normalize
+      ↓
+RQ-KMeans [128, 64, 32] + collision tail
+      ↓
+唯一 Semantic ID <c1,c2,c3,tail>
+
+完整正负反馈历史 + Feedback Type Embedding
+      ↓
+6 层 Transformer Encoder（Hidden=256）
+      ↓
+6 层 Causal Transformer Decoder
+      ↓
+Trie 约束 Beam Search
+      ↓
+Top-K 生成式召回列表
 ```
 
-解码器逐级生成 Token，并依赖先前已生成的 Token。推理时只能沿真实商品编码
-构成的 Trie 扩展，因此不会生成目录外的无效商品。
+SASRec 是独立公平基线，不参与 Semantic ID 构建、MiniTIGER 训练或候选排序。
 
-## 核心工程能力
+## 数据协议
 
-- 时间无泄漏的 leave-last-two-out 数据切分；
-- 内容特征与 SASRec Item Embedding 融合；
-- 带 PCA、白化、容量约束和碰撞消解的工业 RQ-KMeans；
-- Transformer 历史编码与 GRU 自回归 Semantic ID 解码；
-- 精确全目录评分与 Trie 约束 Beam Search；
-- Semantic ID 召回、SASRec 精排和学习式融合；
-- 等容量对照、验证集早停、checkpoint 恢复和 CUDA 混合精度；
-- 索引 Schema、SHA-256 指纹、碰撞率和码本利用率检查。
+- 数据集：KuaiRec Big Matrix，7,174 用户、9,438 视频、12,487,057 条交互；
+- 正反馈：观看比例 `>= 0.7` 且播放时长 `>= 5s`；其余有效交互记为负反馈；
+- 输入保留完整正负序列，并显式加入正/负 Feedback Type Embedding；
+- 负反馈只作为上下文，不作为预测目标；模型只学习生成深度观看物品；
+- 每位用户倒数第二个正反馈作为验证目标，最后一个正反馈作为测试目标；
+- 推理时不屏蔽历史物品，避免错误删除重复观看目标。
 
-## 目录
+## Semantic ID
 
-```text
-configs/        可复现实验配置
-data/           已处理数据；默认被 Git 忽略
-docs/           代码导读、实验报告与复现材料
-results/        正式指标摘要
-scripts/        数据准备、建索引、训练、召回与精排入口
-src/data/       数据加载、时间切分和训练样本
-src/indexing/   Semantic ID 与 RQ-KMeans
-src/models/     生成模型、SASRec 和候选精排器
-src/training/   训练、评估、候选融合与学习式精排
-tests/          索引、模型、数据和混合推荐测试
-```
+最终码表为 `[128,64,32]`，三级前缀理论容量为 262,144。9,438 个物品形成 5,218 个
+不同前缀；4,220 个额外碰撞物品通过局部 `tail` 编号消歧，完整 SID 碰撞率为 0。
+前三层负责语义结构，tail 只负责同前缀物品的唯一标识。
 
-## 快速验证
+## 公平实验
+
+Fair100 协议将 MiniTIGER 与 SASRec 的训练规模统一为 716,169 个正目标，并统一使用
+验证集 HR@200 早停。MiniTIGER 最终模型为 H256、Encoder 6 层、Decoder 6 层、4 Heads、
+FFN 1024，最大历史长度 100；训练支持 FP16、fused AdamW 和断点续训。
+
+### 测试集结果
+
+| 模型 | HR@20 | HR@200 | HR@500 | NDCG@20 | MRR@20 | AUC |
+|---|---:|---:|---:|---:|---:|---:|
+| SASRec V2 Fair100 | **0.2280** | **0.6140** | **0.8372** | 0.1101 | 0.0769 | **0.9696** |
+| MiniTIGER L6 | 0.2234 | 0.5891 | 0.8032 | **0.1150** | **0.0848** | 0.9628 |
+
+结果表明：SASRec 的候选覆盖更高，MiniTIGER 的头部 NDCG/MRR 更高。项目保留这一真实
+结论，不把生成式模型描述为全面优于基线。测试集已用于阶段性分析，后续模型选择只应使用
+验证集。
+
+## 运行方式
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 python -m pytest -q
-python scripts/run_demo.py --config configs/demo.json --output outputs/demo
 ```
 
-Windows NVIDIA 环境见 [CUDA 运行指南](docs/windows-cuda.md)。
-
-## KuaiRec 主流程
-
-准备数据：
+数据与主实验入口：
 
 ```bash
-python scripts/prepare_kuairec.py \
-  --source /path/to/KuaiRec.zip \
-  --output data/kuairec_big
+python scripts/prepare_kuairec_v2.py \
+  --source data/raw/KuaiRec.zip \
+  --output data/kuairec_big_v2
+
+python scripts/build_sentence_t5_embeddings.py \
+  --texts data/kuairec_big_v2/item_texts.csv \
+  --output data/kuairec_big_v2/sentence_t5_embeddings.npy
+
+python scripts/build_sentence_rq_kmeans.py \
+  --embeddings data/kuairec_big_v2/sentence_t5_embeddings.npy \
+  --output data/kuairec_big_v2/rq_128_64_32 \
+  --codebook-sizes 128 64 32 \
+  --pca-dim 128
+
+python scripts/run_generative_v2.py \
+  --config configs/kuairec_big_v2_128_64_32_h256_l6_full100.json \
+  --output outputs/kuairec_big_v2_l6
+
+python scripts/run_masked_sasrec_v2.py \
+  --config configs/kuairec_big_sasrec_v2_fair100_hr200_cuda.json \
+  --output outputs/kuairec_big_sasrec_v2_fair100
 ```
 
-使用已有 SASRec checkpoint 构建 Behavior-aware RQ：
+原始数据、Sentence-T5 权重、训练检查点和大体积中间产物不提交至 Git。
 
-```bash
-python scripts/build_behavior_rq.py \
-  --config configs/kuairec_big_behavior_rq_cuda.json \
-  --sasrec-checkpoint outputs/kuairec_big_cuda/sasrec_checkpoint.pt \
-  --reference-codes outputs/kuairec_big_cuda/semantic_codes.npy \
-  --output outputs/kuairec_big_behavior_rq/index
+## 目录
+
+```text
+configs/          CPU、CUDA 与公平实验配置
+scripts/          数据准备、SID 构建、训练和诊断入口
+src/indexing/     RQ-KMeans 与 Semantic ID
+src/models/       MiniTIGER 与独立 SASRec 基线
+src/training/     训练、Exact 与 Trie Beam 评估
+docs/             架构、数据协议和实验说明
+tests/            单元与回归测试
 ```
 
-训练生成模型并进行多阶段评估：
-
-```bash
-python scripts/run_demo.py \
-  --config configs/kuairec_big_behavior_rq_cuda.json \
-  --output outputs/kuairec_big_behavior_rq/model
-
-python scripts/run_hybrid.py \
-  --config configs/kuairec_big_behavior_rq_cuda.json \
-  --artifacts outputs/kuairec_big_behavior_rq/model \
-  --sasrec-artifacts outputs/kuairec_big_cuda \
-  --output outputs/kuairec_big_behavior_rq/model/hybrid_top200_metrics.json \
-  --candidate-k 200 --beam-size 500 --device cuda
-
-python scripts/run_learned_reranker.py \
-  --config configs/kuairec_big_behavior_rq_cuda.json \
-  --artifacts outputs/kuairec_big_behavior_rq/model \
-  --sasrec-artifacts outputs/kuairec_big_cuda \
-  --work-dir outputs/kuairec_big_behavior_rq/reranker \
-  --candidate-k 200 --beam-size 500 --device cuda
-```
-
-## 文档
-
-- [文档导航](docs/README.md)：推荐阅读顺序
-- [项目演进](docs/project-evolution.md)：从 Demo 到正式系统的改进、实验与取舍
-- [实验结果](docs/results.md)：正式实验、消融和失败实验结论
-- [KuaiRec 实验](docs/kuairec-experiment.md)：数据协议与防泄漏设计
-- [RQ-KMeans 设计](docs/rq-kmeans.md)：工业级 Semantic ID 索引
-- [代码导读](docs/code-walkthrough.md)：核心模块与调用链
-
+详见[文档导航](docs/README.md)。

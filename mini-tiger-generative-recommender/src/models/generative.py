@@ -1,27 +1,39 @@
-"""MiniTIGER 的历史编码器与自回归 Semantic ID 解码器。
-
-调用关系：
-    scripts/run_demo.py 实例化 SemanticIDTransformer
-        ├─ training/train.py 调用 forward(history, target_codes) 做 teacher forcing
-        └─ training/evaluate.py 调用 forward(history, candidate_codes)
-           计算目录中每条合法完整编码的自回归概率
-
-模型不是生成标题文本，而是逐级生成类似 ``[粗类, 细类, tail]`` 的物品编码。
-"""
+"""TIGER 风格的 Semantic ID Transformer Encoder-Decoder。"""
 
 from __future__ import annotations
+
+from dataclasses import dataclass
 
 import torch
 from torch import nn
 
 
-class SemanticIDTransformer(nn.Module):
-    """
-    基于 Semantic ID 的生成式序列推荐模型。
+@dataclass
+class EncodedHistory:
+    """可被候选打分和 Beam Search 复用的历史编码。"""
 
-    模型先用 Transformer Encoder 编码用户历史行为序列，再用 GRUCell 作为
-    自回归解码器，按层生成下一个物品的 Semantic ID token。
-    """
+    memory: torch.Tensor
+    padding_mask: torch.Tensor
+
+    @property
+    def batch_size(self) -> int:
+        return int(self.memory.shape[0])
+
+    def repeat_interleave(self, repeats: int) -> "EncodedHistory":
+        return EncodedHistory(
+            self.memory.repeat_interleave(repeats, dim=0),
+            self.padding_mask.repeat_interleave(repeats, dim=0),
+        )
+
+    def select(self, index: int) -> "EncodedHistory":
+        return EncodedHistory(
+            self.memory[index : index + 1],
+            self.padding_mask[index : index + 1],
+        )
+
+
+class SemanticIDTransformer(nn.Module):
+    """编码用户历史，并用 Transformer Decoder 自回归生成 Semantic ID。"""
 
     def __init__(
         self,
@@ -31,144 +43,194 @@ class SemanticIDTransformer(nn.Module):
         num_heads: int,
         num_layers: int,
         feedforward_dim: int | None = None,
+        decoder_layers: int | None = None,
+        dropout: float = 0.1,
     ):
-        """
-        初始化历史编码器和自回归 Semantic ID 解码器。
-
-        参数:
-            codebook_sizes: 每一级 Semantic ID 的词表大小，包含最后的 tail token 层。
-            max_history: 输入历史序列的最大长度。
-            hidden_dim: token embedding 和模型隐状态维度。
-            num_heads: Transformer Encoder 的注意力头数。
-            num_layers: Transformer Encoder 层数。
-            feedforward_dim: Transformer 前馈层宽度；None 时使用
-                ``hidden_dim * 4``。等容量实验可独立调整它，使生成模型与
-                SASRec 参数量接近而仍保持 Tensor Core 友好的 hidden_dim。
-
-        创建的子模块:
-            code_embeddings: 把历史中每一级 ID token 映射成 hidden_dim 维向量。
-            position: 历史序列位置 embedding。
-            encoder: 编码用户历史的 Transformer Encoder。
-            heads: 每一级输出词表各自对应一个分类头。
-            target_embeddings: 把已生成 token 变成下一解码步的输入。
-            decoder_cell: 在各 ID 层级之间传递状态的 GRUCell。
-            start_token: 第一个解码步使用的可学习起始输入。
-
-        调用:
-            scripts/run_demo.py 分别创建 Semantic ID 模型和 Random ID 模型。
-        """
         super().__init__()
-        # 历史 item 的每一级 code 都有自己的 embedding。
-        # size + 1 是为了给 padding 预留 0，真实 code 在 dataset 中会整体 +1。
+        if not codebook_sizes:
+            raise ValueError("codebook_sizes must not be empty")
+        self.codebook_sizes = tuple(int(size) for size in codebook_sizes)
+        self.num_code_levels = len(self.codebook_sizes)
+        self.hidden_dim = int(hidden_dim)
+
         self.code_embeddings = nn.ModuleList(
-            [nn.Embedding(size + 1, hidden_dim) for size in codebook_sizes]
+            [
+                nn.Embedding(size + 1, hidden_dim, padding_idx=0)
+                for size in self.codebook_sizes
+            ]
         )
-        # 位置 embedding 让 Transformer 知道行为发生在历史序列中的相对位置。
-        self.position = nn.Embedding(max_history, hidden_dim)
-        layer = nn.TransformerEncoderLayer(
+        self.history_position = nn.Embedding(max_history, hidden_dim)
+        # 0=padding, 1=negative event, 2=positive event.
+        self.feedback_embedding = nn.Embedding(3, hidden_dim, padding_idx=0)
+        encoder_layer = nn.TransformerEncoderLayer(
             hidden_dim,
             num_heads,
             feedforward_dim or hidden_dim * 4,
+            dropout=dropout,
             batch_first=True,
-            dropout=0.1,
+            norm_first=True,
+            activation="gelu",
         )
-        # Transformer Encoder 用来从用户历史 Semantic ID 序列中提取兴趣表示。
-        self.encoder = nn.TransformerEncoder(layer, num_layers)
-        # 每一级 Semantic ID token 都对应一个分类头。
-        self.heads = nn.ModuleList([nn.Linear(hidden_dim, size) for size in codebook_sizes])
-        # 解码时，上一层已经生成的 token 会被映射成 embedding，作为下一步输入。
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers,
+            enable_nested_tensor=False,
+        )
+        self.encoder_norm = nn.LayerNorm(hidden_dim)
+
         self.target_embeddings = nn.ModuleList(
-            [nn.Embedding(size, hidden_dim) for size in codebook_sizes]
+            [nn.Embedding(size, hidden_dim) for size in self.codebook_sizes]
         )
-        # GRUCell 负责自回归解码：每生成一级 token，就更新一次解码状态。
-        self.decoder_cell = nn.GRUCell(hidden_dim, hidden_dim)
-        # 第一级 token 没有“上一层 token”，因此使用一个可学习的起始向量。
+        self.decoder_level_embedding = nn.Embedding(
+            self.num_code_levels, hidden_dim
+        )
         self.start_token = nn.Parameter(torch.zeros(hidden_dim))
+        decoder_layer = nn.TransformerDecoderLayer(
+            hidden_dim,
+            num_heads,
+            feedforward_dim or hidden_dim * 4,
+            dropout=dropout,
+            batch_first=True,
+            norm_first=True,
+            activation="gelu",
+        )
+        self.decoder = nn.TransformerDecoder(
+            decoder_layer,
+            decoder_layers if decoder_layers is not None else num_layers,
+        )
+        self.decoder_norm = nn.LayerNorm(hidden_dim)
+        self.heads = nn.ModuleList(
+            [nn.Linear(hidden_dim, size) for size in self.codebook_sizes]
+        )
 
-    def encode_history(self, history_codes):
-        """只运行一次 Transformer，得到用户当前兴趣状态。
-
-        参数:
-            history_codes: LongTensor，形状
-                [batch_size, max_history, num_levels]。
-
-        返回:
-            state: FloatTensor，形状 [batch_size, hidden_dim]。
-
-        评估万级 KuaiRec 目录时，同一用户需要给许多候选物品打分。把历史编码
-        与候选解码拆开后，Transformer 不必为每个候选重复计算。
-        """
-        _, seq_len, _ = history_codes.shape
-        # 同一个历史 item 有多级 code；把各级 code embedding 相加得到 item 表示。
+    def encode_history(
+        self,
+        history_codes: torch.Tensor,
+        feedback_types: torch.Tensor | None = None,
+    ) -> EncodedHistory:
+        """把 ``[B, history, levels]`` 编码为 Decoder 可交叉注意的 memory。"""
+        _, sequence_length, _ = history_codes.shape
         hidden = sum(
             embedding(history_codes[:, :, level])
             for level, embedding in enumerate(self.code_embeddings)
         )
-        # positions 形状是 [seq_len]，广播到 batch 中所有用户。
-        positions = torch.arange(seq_len, device=history_codes.device)
-        hidden = hidden + self.position(positions)
-        # padding 位置的所有 code 都是 0；mask 后 Transformer 不会关注空历史。
+        positions = torch.arange(sequence_length, device=history_codes.device)
         padding_mask = history_codes.sum(dim=-1).eq(0)
-        # encoded 形状保持为 [batch_size, seq_len, hidden_dim]。
-        # KuaiRec 大部分训练样本已经占满 max_history。全 False mask 没有语义作用，
-        # 却会触发 Transformer 的 nested-tensor 检查与转换；此时直接省略它。
-        encoded = self.encoder(
+        if feedback_types is None:
+            feedback_types = (~padding_mask).long() * 2
+        if feedback_types.shape != padding_mask.shape:
+            raise ValueError("feedback types must match history sequence")
+        hidden = (
+            hidden
+            + self.history_position(positions)
+            + self.feedback_embedding(feedback_types)
+        )
+        memory = self.encoder(
             hidden,
             src_key_padding_mask=padding_mask if padding_mask.any() else None,
         )
-        # 历史采用左 padding，因此最后一个位置一定是最新的真实交互。
-        return encoded[:, -1]
+        return EncodedHistory(self.encoder_norm(memory), padding_mask)
 
-    def decode(self, state, target_codes=None):
-        """从已经编码好的用户状态逐级生成 Semantic ID logits。
-
-        参数:
-            state: encode_history 的输出，形状 [batch_size, hidden_dim]。
-            target_codes: 可选的完整目标/候选编码，形状
-                [batch_size, num_levels]。传入时使用 teacher forcing；
-                不传时使用每一级的 argmax token。
-
-        返回:
-            各层 logits 列表。
-        """
-        batch_size = state.shape[0]
-        previous = self.start_token.expand(batch_size, -1)
-        logits = []
-        for level, head in enumerate(self.heads):
-            state = self.decoder_cell(previous, state)
-            level_logits = head(state)
-            logits.append(level_logits)
-            token = (
-                target_codes[:, level]
-                if target_codes is not None
-                else level_logits.argmax(dim=-1)
+    def _decoder_inputs(
+        self,
+        batch_size: int,
+        prefix_codes: torch.Tensor | None,
+        target_length: int,
+        device: torch.device,
+    ) -> torch.Tensor:
+        rows = [self.start_token.expand(batch_size, -1)]
+        prefix_length = 0 if prefix_codes is None else prefix_codes.shape[1]
+        for position in range(1, target_length):
+            if position - 1 >= prefix_length:
+                raise ValueError("prefix does not contain required previous token")
+            rows.append(
+                self.target_embeddings[position - 1](
+                    prefix_codes[:, position - 1]
+                )
             )
-            previous = self.target_embeddings[level](token)
+        inputs = torch.stack(rows, dim=1)
+        levels = torch.arange(target_length, device=device)
+        return inputs + self.decoder_level_embedding(levels)[None, :, :]
+
+    def _decode_hidden(
+        self,
+        encoded: EncodedHistory,
+        prefix_codes: torch.Tensor | None,
+        target_length: int,
+    ) -> torch.Tensor:
+        inputs = self._decoder_inputs(
+            encoded.batch_size,
+            prefix_codes,
+            target_length,
+            encoded.memory.device,
+        )
+        causal_mask = torch.triu(
+            torch.ones(
+                target_length,
+                target_length,
+                dtype=torch.bool,
+                device=encoded.memory.device,
+            ),
+            diagonal=1,
+        )
+        hidden = self.decoder(
+            inputs,
+            encoded.memory,
+            tgt_mask=causal_mask,
+            memory_key_padding_mask=(
+                encoded.padding_mask if encoded.padding_mask.any() else None
+            ),
+        )
+        return self.decoder_norm(hidden)
+
+    def next_token_logits(
+        self,
+        encoded: EncodedHistory,
+        prefix_codes: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """根据已生成前缀返回下一层 Token logits。"""
+        level = 0 if prefix_codes is None else int(prefix_codes.shape[1])
+        if level >= self.num_code_levels:
+            raise ValueError("prefix already contains a complete Semantic ID")
+        if prefix_codes is not None and prefix_codes.shape[0] != encoded.batch_size:
+            raise ValueError("prefix and encoded history batch sizes differ")
+        hidden = self._decode_hidden(encoded, prefix_codes, level + 1)
+        return self.heads[level](hidden[:, level])
+
+    def decode(
+        self,
+        encoded: EncodedHistory,
+        target_codes: torch.Tensor | None = None,
+    ) -> list[torch.Tensor]:
+        """Teacher forcing 训练，或在未提供目标时执行贪心自回归生成。"""
+        if target_codes is not None:
+            expected = (encoded.batch_size, self.num_code_levels)
+            if target_codes.shape != expected:
+                raise ValueError("target code shape differs from model code levels")
+            hidden = self._decode_hidden(
+                encoded,
+                target_codes,
+                self.num_code_levels,
+            )
+            return [
+                head(hidden[:, level]) for level, head in enumerate(self.heads)
+            ]
+
+        logits: list[torch.Tensor] = []
+        generated: list[torch.Tensor] = []
+        for _ in range(self.num_code_levels):
+            prefix = torch.stack(generated, dim=1) if generated else None
+            current = self.next_token_logits(encoded, prefix)
+            logits.append(current)
+            generated.append(current.argmax(dim=-1))
         return logits
 
-    def forward(self, history_codes, target_codes=None):
-        """根据用户历史生成下一个物品的 Semantic ID 各级 logits。
-
-        参数:
-            history_codes: 历史物品 code，形状为 [batch_size, seq_len, num_levels]。
-                padding 位置全为 0，真实历史 code 已经整体 +1。
-            target_codes: 训练时传入的真实目标 code，形状为 [batch_size, num_levels]。
-                如果传入，则使用 teacher forcing；如果不传入，则从每一级
-                logits 中贪心选择 argmax token。
-
-        返回:
-            logits: 一个列表，每个元素是某一级 token 的分类 logits，
-                形状为 [batch_size, level_vocab_size]。
-
-        调用:
-            train_model 传入真实 target_codes，计算训练损失；
-            evaluate_model 传入目录候选编码，精确计算每个候选物品的条件概率。
-
-        自回归依赖:
-            第 0 级预测 P(c0 | history)；
-            第 1 级预测 P(c1 | history, c0)；
-            ...
-            因为上一层 token embedding 会作为下一次 GRUCell 的输入。
-        """
-        state = self.encode_history(history_codes)
-        return self.decode(state, target_codes)
+    def forward(
+        self,
+        history_codes: torch.Tensor,
+        target_codes: torch.Tensor | None = None,
+        feedback_types: torch.Tensor | None = None,
+    ) -> list[torch.Tensor]:
+        return self.decode(
+            self.encode_history(history_codes, feedback_types), target_codes
+        )

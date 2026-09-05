@@ -1,4 +1,4 @@
-"""SASRec Item-ID 序列推荐模型，用作强基线和工业候选精排器。"""
+"""独立的 SASRec Item-ID 序列推荐基线。"""
 
 from __future__ import annotations
 
@@ -30,6 +30,8 @@ class SASRec(nn.Module):
             num_items + 1, hidden_dim, padding_idx=0
         )
         self.position_embedding = nn.Embedding(max_history, hidden_dim)
+        # 0=padding, 1=negative event, 2=positive event.
+        self.feedback_embedding = nn.Embedding(3, hidden_dim, padding_idx=0)
         self.input_dropout = nn.Dropout(dropout)
         layer = nn.TransformerEncoderLayer(
             hidden_dim,
@@ -46,8 +48,12 @@ class SASRec(nn.Module):
         self.output_norm = nn.LayerNorm(hidden_dim)
         self.output_bias = nn.Parameter(torch.zeros(num_items))
 
-    def encode_history(self, history_tokens: torch.Tensor) -> torch.Tensor:
-        """把左 padding 的 Item ID 历史编码成一个用户状态。"""
+    def encode_sequence(
+        self,
+        history_tokens: torch.Tensor,
+        feedback_types: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """编码每个历史位置，显式区分正、负反馈与 padding。"""
         _, sequence_length = history_tokens.shape
         if sequence_length > self.max_history:
             raise ValueError("history is longer than configured max_history")
@@ -55,7 +61,16 @@ class SASRec(nn.Module):
         hidden = self.item_embedding(history_tokens) * math.sqrt(
             self.item_embedding.embedding_dim
         )
-        hidden = self.input_dropout(hidden + self.position_embedding(positions))
+        if feedback_types is None:
+            # 兼容旧 positive-only 数据；真实事件均视为正反馈。
+            feedback_types = history_tokens.ne(0).long() * 2
+        if feedback_types.shape != history_tokens.shape:
+            raise ValueError("feedback types must match history tokens")
+        hidden = self.input_dropout(
+            hidden
+            + self.position_embedding(positions)
+            + self.feedback_embedding(feedback_types)
+        )
         padding_mask = history_tokens.eq(0)
         causal_mask = torch.triu(
             torch.ones(
@@ -83,10 +98,17 @@ class SASRec(nn.Module):
             encoded = self.encoder(hidden, mask=attention_mask)
         else:
             encoded = self.encoder(hidden, mask=causal_mask)
-        return self.output_norm(encoded[:, -1])
+        return self.output_norm(encoded)
+
+    def encode_history(
+        self,
+        history_tokens: torch.Tensor,
+        feedback_types: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        return self.encode_sequence(history_tokens, feedback_types)[:, -1]
 
     def score_all_items(self, state: torch.Tensor) -> torch.Tensor:
-        """精确打分完整目录，返回 [batch, num_items]。"""
+        """精确打分完整目录；支持 [B,D] 或 [B,L,D]。"""
         return (
             state @ self.item_embedding.weight[1:].transpose(0, 1)
             + self.output_bias
@@ -105,5 +127,12 @@ class SASRec(nn.Module):
         scores = torch.einsum("bd,bkd->bk", state, embeddings)
         return scores + self.output_bias[candidate_items]
 
-    def forward(self, history_tokens: torch.Tensor) -> torch.Tensor:
-        return self.score_all_items(self.encode_history(history_tokens))
+    def forward(
+        self,
+        history_tokens: torch.Tensor,
+        feedback_types: torch.Tensor | None = None,
+        *,
+        all_positions: bool = False,
+    ) -> torch.Tensor:
+        states = self.encode_sequence(history_tokens, feedback_types)
+        return self.score_all_items(states if all_positions else states[:, -1])

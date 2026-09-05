@@ -1,0 +1,29 @@
+{
+  "seed": 2026,
+  "interactions_path": "data/kuairec_big_v2/interactions_full.csv",
+  "item_features_path": "data/kuairec_big_v2/item_ids.npy",
+  "min_positive_events": 5,
+  "min_train_positive": 3,
+  "max_history": 100,
+  "target_stride": 50,
+  "batch_size": 64,
+  "evaluation_batch_size": 256,
+  "epochs": 100,
+  "learning_rate": 0.0003,
+  "warmup_epochs": 2,
+  "min_learning_rate": 0.00001,
+  "weight_decay": 0.01,
+  "gradient_clip_norm": 1.0,
+  "monitor_metric": "hitrate@20",
+  "early_stopping_patience": 10,
+  "device": "cuda",
+  "mixed_precision": true,
+  "resume_training": true,
+  "topk": [5, 10, 20],
+  "sasrec": {
+    "hidden_dim": 128,
+    "num_heads": 4,
+    "num_layers": 2,
+    "dropout": 0.1
+  }
+}

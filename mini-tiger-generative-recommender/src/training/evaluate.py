@@ -16,7 +16,7 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader
 
-from src.evaluation.metrics import ranking_metrics
+from src.evaluation.metrics import ranking_metrics, single_positive_auc
 
 
 def _device(value: str | torch.device) -> torch.device:
@@ -44,23 +44,28 @@ def evaluate_model_exact(
 ) -> dict:
     """通过分块全目录打分计算精确 Top-K 指标。
 
-    与旧实现相比，Transformer 对每条历史只计算一次；不同候选只重复运行很轻的
-    GRU 解码器。候选再按 catalog_chunk_size 分块，避免一次展开
+    Transformer Encoder 对每条历史只计算一次；不同候选复用 memory 并运行
+    Transformer Decoder。候选再按 catalog_chunk_size 分块，避免一次展开
     ``batch_size × num_items`` 导致内存峰值。
     """
     runtime_device = _device(device)
     model = model.to(runtime_device)
     model.eval()
     rankings, targets = [], []
+    auc_concordant, auc_pairs, user_aucs = 0.0, 0, []
     valid_codes = torch.as_tensor(item_codes, dtype=torch.long)
     num_items = len(valid_codes)
     topk = min(max(ks), num_items)
 
-    for history, _, target_items, history_items in DataLoader(
-        dataset, batch_size=batch_size
-    ):
+    for batch in DataLoader(dataset, batch_size=batch_size):
+        if len(batch) == 5:
+            history, feedback_types, _, target_items, history_items = batch
+            feedback_types = feedback_types.to(runtime_device)
+        else:
+            history, _, target_items, history_items = batch
+            feedback_types = None
         history = history.to(runtime_device)
-        state = model.encode_history(history)
+        state = model.encode_history(history, feedback_types)
         current_batch = len(history)
         # 分数矩阵保存在 CPU；只有当前候选块进入加速设备。
         scores = torch.empty((current_batch, num_items), dtype=torch.float32)
@@ -69,7 +74,7 @@ def evaluate_model_exact(
             end = min(start + catalog_chunk_size, num_items)
             candidate_codes = valid_codes[start:end].to(runtime_device)
             chunk_size = len(candidate_codes)
-            expanded_state = state.repeat_interleave(chunk_size, dim=0)
+            expanded_state = state.repeat_interleave(chunk_size)
             expanded_codes = candidate_codes.repeat(current_batch, 1)
             logits = model.decode(expanded_state, expanded_codes)
             candidate_scores = torch.zeros(
@@ -86,11 +91,20 @@ def evaluate_model_exact(
         if exclude_seen:
             for row, seen_items in enumerate(history_items):
                 seen_items = seen_items[seen_items.ge(0)]
+                seen_items = seen_items[seen_items.ne(target_items[row])]
                 scores[row, seen_items] = -torch.inf
+
+        concordant, pairs, batch_aucs = single_positive_auc(scores, target_items)
+        auc_concordant += concordant
+        auc_pairs += pairs
+        user_aucs.extend(batch_aucs)
 
         rankings.extend(scores.topk(topk, dim=1).indices.tolist())
         targets.extend(target_items.tolist())
-    return ranking_metrics(rankings, targets, ks)
+    metrics = ranking_metrics(rankings, targets, ks)
+    metrics["auc"] = auc_concordant / max(auc_pairs, 1)
+    metrics["uauc"] = sum(user_aucs) / max(len(user_aucs), 1)
+    return metrics
 
 
 def build_prefix_trie(item_codes) -> tuple[dict[tuple[int, ...], tuple[int, ...]], dict]:
@@ -117,7 +131,7 @@ def build_prefix_trie(item_codes) -> tuple[dict[tuple[int, ...], tuple[int, ...]
 @torch.no_grad()
 def constrained_beam_search(
     model,
-    state: torch.Tensor,
+    state,
     children: dict[tuple[int, ...], tuple[int, ...]],
     code_to_item: dict[tuple[int, ...], int],
     *,
@@ -127,8 +141,8 @@ def constrained_beam_search(
 ) -> list[int]:
     """为单个用户执行合法前缀约束的自回归 Beam Search。
 
-    beam 中每个元素保存“已生成前缀、累计 log 概率、当前 GRU 状态”。每一级
-    只扩展 Trie 允许的 token，因此最终叶子一定对应真实视频。
+    beam 中每个元素保存“已生成前缀、累计 log 概率”。每一级把完整前缀送入
+    Transformer Decoder，并只扩展 Trie 允许的 token。
     """
     return [
         item
@@ -147,7 +161,7 @@ def constrained_beam_search(
 @torch.no_grad()
 def constrained_beam_candidates(
     model,
-    state: torch.Tensor,
+    state,
     children: dict[tuple[int, ...], tuple[int, ...]],
     code_to_item: dict[tuple[int, ...], int],
     *,
@@ -155,36 +169,36 @@ def constrained_beam_candidates(
     candidate_k: int,
     seen_items: set[int] | None = None,
 ) -> list[tuple[int, float]]:
-    """生成带累计 log 概率的合法 Item 候选，供二阶段排序器使用。"""
-    if state.shape[0] != 1:
+    """生成带累计 log 概率的合法 Item 候选。"""
+    if state.batch_size != 1:
         raise ValueError("constrained_beam_candidates expects one encoded user state")
     if beam_size < candidate_k:
         raise ValueError("beam_size must be at least candidate_k")
-    beams = [((), 0.0, state)]
+    beams = [((), 0.0)]
 
-    for level, head in enumerate(model.heads):
-        parent_states = torch.cat([beam[2] for beam in beams], dim=0)
-        if level == 0:
-            previous = model.start_token.expand(len(beams), -1)
-        else:
-            previous_tokens = torch.tensor(
-                [beam[0][-1] for beam in beams],
+    for level in range(model.num_code_levels):
+        expanded_state = state.repeat_interleave(len(beams))
+        prefixes = (
+            None
+            if level == 0
+            else torch.tensor(
+                [beam[0] for beam in beams],
                 dtype=torch.long,
-                device=state.device,
+                device=state.memory.device,
             )
-            previous = model.target_embeddings[level - 1](previous_tokens)
-        next_states = model.decoder_cell(previous, parent_states)
-        log_probs = head(next_states).log_softmax(-1)
+        )
+        log_probs = model.next_token_logits(
+            expanded_state, prefixes
+        ).log_softmax(-1)
 
         expanded = []
-        for parent_index, (prefix, score, _) in enumerate(beams):
+        for parent_index, (prefix, score) in enumerate(beams):
             allowed = children.get(prefix, ())
             for token in allowed:
                 expanded.append(
                     (
                         (*prefix, token),
                         score + float(log_probs[parent_index, token]),
-                        next_states[parent_index : parent_index + 1],
                     )
                 )
         expanded.sort(key=lambda candidate: candidate[1], reverse=True)
@@ -194,7 +208,7 @@ def constrained_beam_candidates(
 
     seen_items = seen_items or set()
     candidates = []
-    for code, score, _ in beams:
+    for code, score in beams:
         item = code_to_item.get(code)
         if item is not None and item not in seen_items:
             candidates.append((item, score))
@@ -225,20 +239,27 @@ def evaluate_model_beam(
         raise ValueError("beam_size must be at least max(ks)")
 
     rankings, targets = [], []
-    for history, _, target_items, history_items in DataLoader(
-        dataset, batch_size=batch_size
-    ):
-        states = model.encode_history(history.to(runtime_device))
+    for batch in DataLoader(dataset, batch_size=batch_size):
+        if len(batch) == 5:
+            history, feedback_types, _, target_items, history_items = batch
+            feedback_types = feedback_types.to(runtime_device)
+        else:
+            history, _, target_items, history_items = batch
+            feedback_types = None
+        states = model.encode_history(
+            history.to(runtime_device), feedback_types
+        )
         for row in range(len(history)):
             seen = (
                 set(history_items[row][history_items[row].ge(0)].tolist())
                 if exclude_seen
                 else set()
             )
+            seen.discard(int(target_items[row]))
             rankings.append(
                 constrained_beam_search(
                     model,
-                    states[row : row + 1],
+                    states.select(row),
                     children,
                     code_to_item,
                     beam_size=beam_size,
@@ -288,6 +309,7 @@ def evaluate_popularity(
         _, _, target, history_items = dataset[index]
         if exclude_seen:
             seen = set(history_items[history_items.ge(0)].tolist())
+            seen.discard(int(target))
             rankings.append([item for item in global_ranking if item not in seen])
         else:
             rankings.append(global_ranking)
@@ -310,15 +332,30 @@ def evaluate_sasrec(
     model = model.to(runtime_device)
     model.eval()
     rankings, targets = [], []
+    auc_concordant, auc_pairs, user_aucs = 0.0, 0, []
     topk = min(max(ks), model.num_items)
-    for history_tokens, target_items, history_items in DataLoader(
-        dataset, batch_size=batch_size
-    ):
-        scores = model(history_tokens.to(runtime_device)).float().cpu()
+    for batch in DataLoader(dataset, batch_size=batch_size):
+        if len(batch) == 4:
+            history_tokens, feedback_types, target_items, history_items = batch
+            feedback_types = feedback_types.to(runtime_device)
+        else:
+            history_tokens, target_items, history_items = batch
+            feedback_types = None
+        scores = model(
+            history_tokens.to(runtime_device), feedback_types
+        ).float().cpu()
         if exclude_seen:
             for row, seen_items in enumerate(history_items):
                 seen_items = seen_items[seen_items.ge(0)]
+                seen_items = seen_items[seen_items.ne(target_items[row])]
                 scores[row, seen_items] = -torch.inf
+        concordant, pairs, batch_aucs = single_positive_auc(scores, target_items)
+        auc_concordant += concordant
+        auc_pairs += pairs
+        user_aucs.extend(batch_aucs)
         rankings.extend(scores.topk(topk, dim=1).indices.tolist())
         targets.extend(target_items.tolist())
-    return ranking_metrics(rankings, targets, ks)
+    metrics = ranking_metrics(rankings, targets, ks)
+    metrics["auc"] = auc_concordant / max(auc_pairs, 1)
+    metrics["uauc"] = sum(user_aucs) / max(len(user_aucs), 1)
+    return metrics

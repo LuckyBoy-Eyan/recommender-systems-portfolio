@@ -1,0 +1,39 @@
+{
+  "status": "full KuaiRec SASRec baseline; re-evaluated from supplied checkpoint",
+  "source_archive_sha256": "def046a079a46e1ca5a2c9ae6c7a3507ee2852cd97cc2b5309605f29033cd29e",
+  "checkpoint": {
+    "parameters": 1627230,
+    "best_epoch": 10,
+    "monitor": "hitrate@20",
+    "best_validation_score_during_original_run": 0.14120434903819348
+  },
+  "protocol_correction": "exclude historical items except the current ground-truth target",
+  "data": {"users": 7174, "items": 9438, "train_samples": 716054},
+  "validation": {
+    "hitrate@5": 0.06286590465570115,
+    "ndcg@5": 0.041015264250201106,
+    "mrr@5": 0.033879286311681085,
+    "hitrate@10": 0.0984109283523836,
+    "ndcg@10": 0.052384969283852244,
+    "mrr@10": 0.03849969687717106,
+    "hitrate@20": 0.14928909952606634,
+    "ndcg@20": 0.06517294210370637,
+    "mrr@20": 0.04196900180719241,
+    "auc": 0.9542425912878418,
+    "uauc": 0.9542433129619436
+  },
+  "test": {
+    "hitrate@5": 0.06063562865904656,
+    "ndcg@5": 0.039394931266991354,
+    "mrr@5": 0.032448192547161026,
+    "hitrate@10": 0.09381098410928353,
+    "ndcg@10": 0.05009203594672227,
+    "mrr@10": 0.03684485642598267,
+    "hitrate@20": 0.14120434903819348,
+    "ndcg@20": 0.062018579338585365,
+    "mrr@20": 0.04008986852586048,
+    "auc": 0.9489304434996004,
+    "uauc": 0.9489307982247819
+  },
+  "training_note": "validation HitRate improved through epoch 10; the run hit its epoch limit rather than early stopping"
+}

@@ -7,6 +7,7 @@ NextItemDataset.__getitem__，再调用 SemanticIDTransformer.forward。
 from __future__ import annotations
 
 import os
+import math
 from pathlib import Path
 
 import torch
@@ -43,6 +44,8 @@ def train_model(
     resume: bool = False,
     mixed_precision: bool = False,
     amp_dtype: str = "float16",
+    warmup_epochs: int = 2,
+    min_learning_rate: float = 1e-5,
 ):
     """使用各级 token 交叉熵之和训练一个 SemanticIDTransformer。
 
@@ -57,7 +60,7 @@ def train_model(
         gradient_clip_norm: 梯度裁剪阈值；None 表示不裁剪。
         num_workers: DataLoader 后台进程数。macOS 默认 0 更稳定。
         validation_fn: 可选回调，每轮结束后接收 model 并返回指标字典。
-        monitor_metric: 用于选择最佳 epoch 的指标，例如 ``recall@20``。
+        monitor_metric: 用于选择最佳 epoch 的指标，例如 ``hitrate@20``。
         early_stopping_patience: 验证指标连续多少轮不提升后停止。
         checkpoint_path: 可选检查点路径。每轮完成后原子写入，可恢复长训练。
         resume: 路径存在时是否恢复模型、优化器、早停状态和训练曲线。
@@ -87,7 +90,24 @@ def train_model(
     )
     # AdamW 是优化器，负责根据 loss 的反向传播结果更新模型参数。
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=learning_rate, weight_decay=weight_decay
+        model.parameters(),
+        lr=learning_rate,
+        weight_decay=weight_decay,
+        fused=runtime_device.type == "cuda",
+    )
+    total_steps = max(epochs * len(loader), 1)
+    warmup_steps = min(warmup_epochs * len(loader), total_steps - 1)
+    minimum_ratio = min_learning_rate / learning_rate
+
+    def learning_rate_multiplier(step: int) -> float:
+        if warmup_steps > 0 and step < warmup_steps:
+            return max((step + 1) / warmup_steps, 1.0 / warmup_steps)
+        progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+        cosine = 0.5 * (1.0 + math.cos(math.pi * min(progress, 1.0)))
+        return minimum_ratio + (1.0 - minimum_ratio) * cosine
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(
+        optimizer, lr_lambda=learning_rate_multiplier
     )
     if amp_dtype not in {"float16", "bfloat16"}:
         raise ValueError("amp_dtype must be 'float16' or 'bfloat16'")
@@ -108,6 +128,8 @@ def train_model(
         saved = torch.load(checkpoint, map_location=runtime_device, weights_only=False)
         model.load_state_dict(saved["model_state"])
         optimizer.load_state_dict(saved["optimizer_state"])
+        if saved.get("scheduler_state"):
+            scheduler.load_state_dict(saved["scheduler_state"])
         if saved.get("scaler_state"):
             scaler.load_state_dict(saved["scaler_state"])
         training_history = saved["training_history"]
@@ -122,7 +144,11 @@ def train_model(
         level_loss_totals = None
         hard_loss_total = 0.0
         for batch in loader:
-            history, target_codes, _, _ = batch
+            if len(batch) == 5:
+                history, feedback_types, target_codes, _, _ = batch
+            else:
+                history, target_codes, _, _ = batch
+                feedback_types = None
             # DataLoader 拼接后的形状：
             # history      [batch_size, max_history, num_levels]
             # target_codes [batch_size, num_levels]
@@ -134,12 +160,16 @@ def train_model(
             # 预测下一层 token 时，喂入真实的上一层 token，让训练更稳定。
             history = history.to(runtime_device, non_blocking=True)
             target_codes = target_codes.to(runtime_device, non_blocking=True)
+            if feedback_types is not None:
+                feedback_types = feedback_types.to(
+                    runtime_device, non_blocking=True
+                )
             with torch.autocast(
                 device_type=runtime_device.type,
                 dtype=autocast_dtype,
                 enabled=amp_enabled,
             ):
-                logits = model(history, target_codes)
+                logits = model(history, target_codes, feedback_types)
                 # logits 里面有多组预测结果：
                 # logits[0] 预测第 1 级 token，logits[1] 预测第 2 级 token，依此类推。
                 # 每一级 Semantic ID 都单独算分类损失，最后相加成一个总 loss。
@@ -160,6 +190,7 @@ def train_model(
             # 优化器真正更新参数，让模型下次更相信正确的 Semantic ID token。
             scaler.step(optimizer)
             scaler.update()
+            scheduler.step()
             epoch_loss += float(loss.detach()) * len(history)
             if level_loss_totals is None:
                 level_loss_totals = [0.0] * len(level_losses)
@@ -176,12 +207,13 @@ def train_model(
                 value / max(sample_count, 1)
                 for value in (level_loss_totals or [])
             ],
+            "learning_rate": optimizer.param_groups[0]["lr"],
         }
         if validation_fn is not None:
             validation_metrics = validation_fn(model)
             record["validation"] = validation_metrics
             metric_name = monitor_metric or next(
-                key for key in validation_metrics if key.startswith("recall@")
+                key for key in validation_metrics if key.startswith("hitrate@")
             )
             score = float(validation_metrics[metric_name])
             if score > best_score:
@@ -203,6 +235,7 @@ def train_model(
                     "next_epoch": epoch + 1,
                     "model_state": model.state_dict(),
                     "optimizer_state": optimizer.state_dict(),
+                    "scheduler_state": scheduler.state_dict(),
                     "scaler_state": scaler.state_dict(),
                     "training_history": training_history,
                     "best_score": best_score,

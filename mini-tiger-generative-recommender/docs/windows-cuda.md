@@ -10,7 +10,7 @@ scripts/
 src/
 tests/
 data/kuairec_big/interactions.csv
-data/kuairec_big/item_features.npy
+data/kuairec_big/item_embeddings/item_embeddings.npy
 data/kuairec_big/item_ids.npy
 data/kuairec_big/stats.json
 ```
@@ -50,14 +50,15 @@ python -m pytest -q
 ```
 
 自检会真实运行一个与主配置同尺寸的 FP16 Transformer 前向。如果这里显存不足，
-先把 `configs/kuairec_big_cuda.json` 中的 `batch_size` 从 256 调为 128 或 64。
+先把 `configs/kuairec_big_generative_cuda.json` 中的 `batch_size` 从 256 调为
+128 或 64。
 
 ## 4. 启动全量实验
 
 ```powershell
-python scripts/run_demo.py `
-  --config configs/kuairec_big_cuda.json `
-  --output outputs/kuairec_big_cuda
+python scripts/run_generative_retrieval.py `
+  --config configs/kuairec_big_generative_cuda.json `
+  --output outputs/kuairec_big_generative_cuda
 ```
 
 配置覆盖全部 7,174 用户、9,438 视频，每用户最多 100 个最近训练目标，并依次
@@ -65,11 +66,19 @@ python scripts/run_demo.py `
 每轮原子保存：
 
 ```text
-outputs/kuairec_big_cuda/semantic_checkpoint.pt
-outputs/kuairec_big_cuda/random_checkpoint.pt
+outputs/kuairec_big_generative_cuda/semantic_checkpoint.pt
+outputs/kuairec_big_generative_cuda/random_checkpoint.pt
 ```
 
 进程中断后执行相同命令即可从下一轮继续。最终结果位于同目录的 `metrics.json`。
+
+若只运行独立 SASRec baseline：
+
+```powershell
+python scripts/run_sasrec_baseline.py `
+  --config configs/kuairec_big_generative_cuda.json `
+  --output outputs/kuairec_big_sasrec_cuda
+```
 
 ## 5. 关于 Faiss
 

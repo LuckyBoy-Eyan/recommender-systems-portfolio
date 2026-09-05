@@ -217,7 +217,7 @@ def build_random_codes(
 def codebook_diagnostics(codes: np.ndarray, codebook_sizes: list[int]) -> dict:
     """统计各级 token 利用率、熵以及完整前缀碰撞情况。
 
-    这些诊断比只看最终 Recall 更能判断 Semantic ID 是否退化。若某一级只使用
+    这些诊断比只看最终 HitRate 更能判断 Semantic ID 是否退化。若某一级只使用
     少量 token，或少数 token 承担绝大多数物品，理论组合容量就没有真正利用。
     """
     codes = np.asarray(codes)

@@ -1,0 +1,9 @@
+{
+  "status": "refactor smoke test; not a full-scale final result",
+  "dataset": {"name": "KuaiRec subset", "users": 500, "items": 1000, "positive_events": 478635},
+  "protocol": "temporal leave-two-out, one target per sample",
+  "semantic_id_transformer": {"hitrate_at_5": 0.158, "hitrate_at_10": 0.244, "hitrate_at_20": 0.336, "ndcg_at_20": 0.16862},
+  "random_id_transformer": {"hitrate_at_5": 0.140, "hitrate_at_10": 0.204, "hitrate_at_20": 0.290, "ndcg_at_20": 0.14806},
+  "sasrec_baseline": {"hitrate_at_5": 0.106, "hitrate_at_10": 0.164, "hitrate_at_20": 0.262, "ndcg_at_20": 0.11955},
+  "popularity": {"hitrate_at_20": 0.192}
+}

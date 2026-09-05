@@ -1,7 +1,7 @@
 {
   "seed": 2026,
   "interactions_path": "data/kuairec_smoke/interactions.csv",
-  "item_features_path": "data/kuairec_smoke/item_features.npy",
+  "item_features_path": "data/kuairec_smoke/item_embeddings/item_embeddings.npy",
   "split_strategy": "temporal_leave_two_out",
   "min_sequence_length": 10,
   "min_train_sequence_length": 3,
@@ -10,8 +10,8 @@
   "codebook_sizes": [32, 32, 32],
   "semantic_id_method": "rq_kmeans",
   "rq_backend": "auto",
-  "rq_pca_dim": 48,
-  "rq_whiten": true,
+  "rq_pca_dim": 96,
+  "rq_whiten": false,
   "rq_l2_normalize": true,
   "rq_niter": 25,
   "rq_nredo": 3,
@@ -21,10 +21,13 @@
   "minibatch_kmeans_threshold": 5000,
   "max_history": 50,
   "hidden_dim": 64,
+  "feedforward_dim": 256,
   "num_layers": 2,
+  "decoder_layers": 2,
   "num_heads": 4,
+  "dropout": 0.1,
   "batch_size": 128,
-  "epochs": 6,
+  "epochs": 4,
   "validate_every_epoch": true,
   "monitor_metric": "hitrate@20",
   "early_stopping_patience": 2,
@@ -40,5 +43,5 @@
   "exclude_seen_items": true,
   "topk": [5, 10, 20],
   "run_random_baseline": true,
-  "save_model": false
+  "save_model": true
 }

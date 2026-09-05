@@ -1,0 +1,32 @@
+{
+  "status": "legacy; predates independent embedding and Transformer Decoder refactor",
+  "project": "MiniTIGER legacy multi-stage recommender",
+  "dataset": {"name": "KuaiRec Big Matrix", "positive_events": 6309308, "users": 7174, "items": 9438},
+  "semantic_id": {
+    "codebook_sizes": [64, 64, 64],
+    "collision_rate": 0.0,
+    "level_utilization": [1.0, 1.0, 1.0],
+    "exact_hitrate_at_200": 0.5618901589071648,
+    "beam_500_hitrate_at_200": 0.5618901589071648
+  },
+  "pure_generator_test": {
+    "hitrate_at_5": 0.09492612210761081,
+    "hitrate_at_10": 0.1391134652913298,
+    "hitrate_at_20": 0.1968218567047672,
+    "ndcg_at_20": 0.09561991853667991
+  },
+  "legacy_fixed_fusion_test": {"hitrate_at_20": 0.21313074993030387, "ndcg_at_20": 0.10445349597985584},
+  "legacy_learned_ranker_test": {
+    "hitrate_at_5": 0.10579871759130192,
+    "hitrate_at_10": 0.15179816002230276,
+    "hitrate_at_20": 0.21368831892946752,
+    "ndcg_at_20": 0.10475954416420936
+  },
+  "legacy_ablation": {
+    "equal_capacity_rq_hitrate_at_200": 0.562169,
+    "behavior_rq_hitrate_at_200": 0.561890,
+    "coarse_weight2_hitrate_at_200": 0.539309,
+    "coarse_distillation_hitrate_at_200": 0.539030
+  },
+  "integrity": {"source": "verified Windows experiment summaries", "historical_record_unchanged": true}
+}

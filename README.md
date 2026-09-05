@@ -5,7 +5,7 @@
 | 项目 | 技术重点 | 最终公开结果 |
 |---|---|---|
 | [多阶段会话推荐](multistage-session-recommender/) | 七路全量召回、Item2Vec、双塔困难负样本、PLE 多任务精排 | PLE 相对 RRF：HitRate@5 `+2.11pp`，NDCG@5 `+7.21pp` |
-| [MiniTIGER](mini-tiger-generative-recommender/) | RQ-KMeans Semantic ID、自回归解码、SASRec 精排 | Recall@20 `0.2137`，NDCG@20 `0.1048` |
+| [MiniTIGER](mini-tiger-generative-recommender/) | Sentence-T5 Semantic ID、Encoder-Decoder 自回归生成、Trie Beam Search | HR@200 `0.5891`，NDCG@20 `0.1150` |
 
 ## 多阶段会话推荐亮点
 
@@ -44,8 +44,7 @@ RRF 在 Top20/50 覆盖率和全候选 AUC/GAUC/UAUC 上更强；项目保留这
 
 1. [多阶段会话推荐 README](multistage-session-recommender/README.md)
 2. [多阶段推荐完整实验报告](multistage-session-recommender/docs/complete-experiment-report.md)
-3. [多阶段推荐项目演进](multistage-session-recommender/docs/project-evolution.md)
-4. [MiniTIGER README](mini-tiger-generative-recommender/README.md)
+3. [MiniTIGER README](mini-tiger-generative-recommender/README.md)
 
 ## 本地检查
 

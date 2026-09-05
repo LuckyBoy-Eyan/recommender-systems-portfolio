@@ -26,7 +26,7 @@
   "batch_size": 256,
   "epochs": 6,
   "validate_every_epoch": true,
-  "monitor_metric": "recall@20",
+  "monitor_metric": "hitrate@20",
   "early_stopping_patience": 2,
   "learning_rate": 0.0003,
   "weight_decay": 0.01,

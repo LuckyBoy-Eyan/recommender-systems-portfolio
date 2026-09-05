@@ -15,7 +15,9 @@ ROOT = Path(__file__).resolve().parents[1]
 def main() -> None:
     """Validate CUDA, mixed precision, config paths and a representative forward pass."""
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", default="configs/kuairec_big_cuda.json")
+    parser.add_argument(
+        "--config", default="configs/kuairec_big_generative_cuda.json"
+    )
     args = parser.parse_args()
     config = json.loads((ROOT / args.config).read_text())
 
@@ -34,7 +36,9 @@ def main() -> None:
     features = np.load(features_path, mmap_mode="r")
     # Representative attention workload; this also catches CUDA OOM early.
     batch_size = config["batch_size"]
-    hidden_dim = config["hidden_dim"]
+    model_config = config.get("sasrec", config)
+    hidden_dim = model_config.get("hidden_dim", config.get("hidden_dim"))
+    num_heads = model_config.get("num_heads", config.get("num_heads"))
     probe = torch.randn(
         batch_size,
         config["max_history"],
@@ -44,7 +48,7 @@ def main() -> None:
     )
     layer = torch.nn.TransformerEncoderLayer(
         hidden_dim,
-        config["num_heads"],
+        num_heads,
         hidden_dim * 4,
         batch_first=True,
         device=device,

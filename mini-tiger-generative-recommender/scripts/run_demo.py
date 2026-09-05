@@ -98,6 +98,8 @@ def train_from_config(
         resume=config.get("resume_training", False),
         mixed_precision=config.get("mixed_precision", False),
         amp_dtype=config.get("amp_dtype", "float16"),
+        warmup_epochs=config.get("warmup_epochs", 2),
+        min_learning_rate=config.get("min_learning_rate", 1e-5),
     )
 
 
@@ -283,11 +285,13 @@ def main():
     train_sequences, train_data, validation_data, test_data = make_datasets(
         sequences, codes, config
     )
-    # 初始化生成式推荐模型：Transformer 编码历史，GRUCell 自回归生成 code。
+    # 初始化生成式推荐模型：Transformer 编码历史并自回归解码 Semantic ID。
     torch.manual_seed(seed)
     model = SemanticIDTransformer(
         semantic_sizes, config["max_history"], config["hidden_dim"],
-        config["num_heads"], config["num_layers"], config.get("feedforward_dim")
+        config["num_heads"], config["num_layers"], config.get("feedforward_dim"),
+        decoder_layers=config.get("decoder_layers"),
+        dropout=config.get("dropout", 0.1),
     )
     # 训练 Semantic ID 模型，并在测试集上评估。
     train_from_config(
@@ -319,6 +323,8 @@ def main():
             config["num_heads"],
             config["num_layers"],
             config.get("feedforward_dim"),
+            decoder_layers=config.get("decoder_layers"),
+            dropout=config.get("dropout", 0.1),
         )
         train_from_config(
             random_model,

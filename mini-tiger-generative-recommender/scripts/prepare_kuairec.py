@@ -376,6 +376,8 @@ def main():
     events = events.rename(columns={"video_id": "item_id"})
     events.to_csv(output / "interactions.csv", index=False)
     np.save(output / "item_features.npy", features)
+    np.save(output / "content_features.npy", content_features)
+    np.save(output / "collaborative_features.npy", collaborative_features)
     np.save(output / "item_ids.npy", item_ids)
 
     per_user = events.groupby("user_id").size()

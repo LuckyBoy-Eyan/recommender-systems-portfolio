@@ -91,7 +91,9 @@ def test_exact_and_full_beam_agree_on_topk_metrics():
     beam = evaluate_model_beam(
         model, dataset, codes, [1, 4], batch_size=1, beam_size=4
     )
-    assert exact == beam
+    assert {key: value for key, value in exact.items() if key not in {"auc", "uauc"}} == beam
+    assert 0.0 <= exact["auc"] <= 1.0
+    assert 0.0 <= exact["uauc"] <= 1.0
 
 
 def test_training_checkpoint_can_resume_at_next_epoch(tmp_path):

@@ -8,10 +8,12 @@ from __future__ import annotations
 
 import math
 
+import torch
+
 
 def ranking_metrics(rankings: list[list[int]], targets: list[int], ks: list[int]) -> dict:
     """
-    根据推荐排序列表和真实目标物品，计算 Recall、HitRate、NDCG、MRR。
+    根据推荐排序列表和真实目标物品，计算 HitRate、NDCG、MRR。
 
     rankings[i] 是第 i 个样本的推荐物品列表，越靠前分数越高。
     targets[i] 是第 i 个样本真实发生的下一个物品。
@@ -22,14 +24,13 @@ def ranking_metrics(rankings: list[list[int]], targets: list[int], ks: list[int]
         ks: 指标截断位置列表，例如 [5, 10, 20]。
 
     返回:
-        包含 recall@k、hitrate@k、ndcg@k 和 mrr@k 的扁平字典。
+        包含 hitrate@k、ndcg@k 和 mrr@k 的扁平字典。
 
     调用:
         training.evaluate.evaluate_model 和 evaluate_popularity。
 
     指标解释:
-        Recall/HitRate: 真实物品是否进入前 k；本项目每条样本只有一个正例，
-            所以两者数值完全相同。
+        HitRate: 真实物品是否进入前 k。
         NDCG: 命中位置越靠前越高，折扣为 1/log2(rank+1)。
         MRR: 命中位置的倒数，即 1/rank。
     """
@@ -50,9 +51,30 @@ def ranking_metrics(rankings: list[list[int]], targets: list[int], ks: list[int]
                 reciprocal += 1.0 / rank
         # 避免空测试集导致除以 0；正常情况下 count 就是测试样本数。
         count = max(len(targets), 1)
-        # 当前任务每条样本只有一个真实目标，所以 recall@k 和 hitrate@k 数值相同。
-        metrics[f"recall@{k}"] = hits / count
         metrics[f"hitrate@{k}"] = hits / count
         metrics[f"ndcg@{k}"] = ndcg / count
         metrics[f"mrr@{k}"] = reciprocal / count
     return metrics
+
+
+def single_positive_auc(
+    scores: torch.Tensor, targets: torch.Tensor
+) -> tuple[float, int, list[float]]:
+    """计算单目标、全目录排序的 AUC 充分统计量。
+
+    ``-inf`` 表示被排除的候选。比较只发生在同一用户内部；目标与负物品同分时
+    记 0.5。返回正确排序对的加权数量、有效正负对数量及逐用户 AUC。
+    """
+    scores = scores.float().cpu()
+    targets = targets.long().cpu()
+    target_scores = scores.gather(1, targets[:, None]).squeeze(1)
+    eligible = torch.isfinite(scores)
+    negatives = eligible.clone()
+    negatives.scatter_(1, targets[:, None], False)
+    better = (target_scores[:, None] > scores) & negatives
+    tied = (target_scores[:, None] == scores) & negatives
+    concordant = better.sum(dim=1).double() + 0.5 * tied.sum(dim=1).double()
+    counts = negatives.sum(dim=1)
+    valid = counts > 0
+    user_auc = (concordant[valid] / counts[valid]).tolist()
+    return float(concordant[valid].sum()), int(counts[valid].sum()), user_auc
